@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>reBot 采集端 · 把“采数据”变成消费级体验</title>
+<meta name="description" content="一块数位板遥操 6 自由度机械臂：自动录制、质检、打包成可训练的 LeRobot 风格数据集。真机跑通，数据可查。" />
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="style.css" />
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+
+<!-- 顶部进度条 + 导航 -->
+<div class="progress" aria-hidden="true"><i id="progressBar"></i></div>
+<header class="nav" id="nav">
+  <a class="brand" href="#top">
+    <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true">
+      <path d="M14 46 L30 30 L46 14" stroke="#3ac0ff" stroke-width="6" stroke-linecap="round" fill="none"/>
+      <circle cx="46" cy="14" r="7" fill="#3ac0ff"/><circle cx="14" cy="46" r="5" fill="#39d98a"/>
+    </svg>
+    <strong>reBot 采集端</strong>
+  </a>
+  <nav class="nav-links">
+    <a href="#pain">痛点</a>
+    <a href="#pipeline">流程</a>
+    <a href="#stack">分层</a>
+    <a href="#play">数据入库</a>
+    <a href="#proof">实测</a>
+    <a href="#limits">边界</a>
+    <a class="nav-cta" href="https://github.com/voicepeak/2026Evomap-hackathon" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<!-- ============================ HERO（指针视差） ============================ -->
+<section class="hero" id="top">
+  <canvas class="hero-canvas" id="heroCanvas" aria-hidden="true"></canvas>
+  <div class="hero-glow" id="heroGlow" aria-hidden="true"></div>
+
+  <div class="hero-inner">
+    <div class="hero-copy" data-depth="0.35">
+      <p class="eyebrow"><span class="dot-live"></span>具身智能 · 遥操采集工作区</p>
+      <h1>把「采数据」<br />变成消费级体验</h1>
+      <p class="lede">
+        一块数位板控制 6 自由度机械臂 —— 落笔跟手、抬笔悬停；
+        采集盒自动录制、质检、打包成可训练数据集。
+        <strong>不需要主臂，不需要手工标定。</strong>
+        机械臂与相机跑在采集盒（Ubuntu）上，你在 Mac / 浏览器里操控 ——
+        <strong>用户端不用装 ROS，也不用碰 Ubuntu。</strong>
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#pipeline">▸ 看它怎么跑</a>
+        <a class="btn btn-ghost" href="https://github.com/voicepeak/2026Evomap-hackathon" target="_blank" rel="noopener">仓库 / 数据</a>
+      </div>
+      <dl class="hero-stats">
+        <div><dt>电机</dt><dd><b data-count="7">0</b></dd></div>
+        <div><dt>落盘帧率</dt><dd><b data-count="93">0</b><i>fps</i></dd></div>
+        <div><dt>丢帧</dt><dd><b data-count="0" data-decimals="2">0</b><i>%</i></dd></div>
+        <div><dt>数据集</dt><dd><b data-count="7">0</b><i>集</i></dd></div>
+      </dl>
+    </div>
+
+    <div class="hero-visual" data-depth="0.75">
+      <div class="hud-card" id="hudCard">
+        <div class="hud-head">
+          <span class="hud-title">位置模式 · 100Hz</span>
+          <span class="hud-badge">录制中 #3 · 1284 帧</span>
+        </div>
+        <div class="hud-msg">安全盒：接近边界按剩余空间成比例减速 · 软限位 3°</div>
+        <div class="joints" id="jointRows"></div>
+        <div class="hud-foot">
+          <span>笔 <b id="penHz">0</b> Hz</span>
+          <span>压力 <b>0.50</b></span>
+          <span class="ok">● 落笔</span>
+          <span>手势 <b>张开手 → 张开行程</b></span>
+        </div>
+      </div>
+      <div class="float-chip chip-a">笔尖落笔 = 跟手</div>
+      <div class="float-chip chip-b">抬笔 = 悬停</div>
+      <div class="float-chip chip-c">右键单击 = 换电机</div>
+    </div>
+  </div>
+  <div class="scroll-hint" aria-hidden="true"><span></span>向下滚动</div>
+</section>
+
+<main>
+
+<!-- ============================ 痛点（悬停交互） ============================ -->
+<section class="section" id="pain">
+  <div class="section-head reveal">
+    <p class="kicker">01 / 痛点</p>
+    <h2>采数据这件事，今天太重了</h2>
+    <p class="section-sub">这些坑我们都在真机上踩过 —— 不是 PPT。</p>
+  </div>
+  <div class="grid grid-4">
+    <article class="card tilt reveal" data-spot>
+      <span class="card-num">01</span>
+      <h3>门槛高</h3>
+      <p>主臂贵、要标定、关节方向与零点一堆坑；两个人一台机器，光把机械臂跑起来就耗掉一天。</p>
+      <p class="card-foot">→ 我们用数位板做绝对坐标输入，落笔即跟手</p>
+    </article>
+    <article class="card tilt reveal" data-spot>
+      <span class="card-num">02</span>
+      <h3>环境割裂</h3>
+      <p>ROS2 / Isaac Sim / LeRobot 默认都在 Ubuntu：装驱动、编译 workspace，光把环境跑通就耗掉一天。</p>
+      <p class="card-foot">→ <b>把环境收进采集盒</b>：机械臂 + 相机跑在 Ubuntu 盒子上（Edge 镜像 + Docker），
+        用户侧只要一个客户端或网页 —— Mac / Windows 都不用装 ROS，也不用碰 Ubuntu</p>
+    </article>
+    <article class="card tilt reveal" data-spot>
+      <span class="card-num">03</span>
+      <h3>数据不可用</h3>
+      <p>各家用各自的臂、各自的相机、各自的时间戳，采出来无法直接互换训练。</p>
+      <p class="card-foot">→ 统一成 Parquet + 视频 + meta，附设备档案与质检结论</p>
+    </article>
+    <article class="card tilt reveal" data-spot>
+      <span class="card-num">04</span>
+      <h3>没有质量保障</h3>
+      <p>采集靠人盯，脏数据混进数据集，训练白跑。</p>
+      <p class="card-foot">→ 硬门 + A/B/C/F 评分卡，不合格的连数据集都进不去</p>
+    </article>
+  </div>
+</section>
+
+<!-- ============================ 流程（滚动 morph） ============================ -->
+<section class="section section-morph" id="pipeline">
+  <div class="section-head reveal">
+    <p class="kicker">02 / 采集流程</p>
+    <h2>一次动作，三种形态</h2>
+    <p class="section-sub">滚动看它从「笔」变成「轨迹」，再变成「数据集」。</p>
+  </div>
+
+  <div class="morph-wrap" id="morphWrap">
+    <div class="morph-sticky">
+      <div class="stage3d" id="stage3d">
+        <img class="stage3d-poster" id="stage3dPoster" src="assets/models/scene_poster.jpg"
+             alt="机械臂与数位板 3D 场景静态图" />
+        <canvas id="scene3d" aria-label="可拖拽旋转的 3D 场景"></canvas>
+        <div class="morph-badge" id="morphBadge">① 输入 · 笔</div>
+        <p class="stage3d-hint">拖拽可旋转</p>
+      </div>
+      <p class="stage3d-credit">
+        3D 模型（CC-BY 3.0，via Poly Pizza）：Robot Arm by Yali Izzo ·
+        Tablet / Pen by Poly by Google
+      </p>
+    </div>
+
+    <div class="morph-steps">
+      <article class="morph-step" data-step="0">
+        <p class="step-kicker">① 输入层 · 数位板</p>
+        <h3>笔尖就是绝对坐标</h3>
+        <ul>
+          <li>落笔瞬间取锚点，之后只按<b>位移增量</b>驱动 —— 手感与鼠标无关</li>
+          <li>抬笔即停：0.4s 无输入视为抬笔，机械臂原地悬停</li>
+          <li>笔右键：单击换电机（J1…J6/夹爪），长按切位置/姿态</li>
+        </ul>
+      </article>
+      <article class="morph-step" data-step="1">
+        <p class="step-kicker">② 采集层 · 控制与记录</p>
+        <h3>100Hz 把每个动作记下来</h3>
+        <ul>
+          <li>最小 jerk 曲线（10a³−15a⁴+6a⁵）下发，不是阶跃</li>
+          <li>每条 episode 记录：6 关节 pos/vel/torque + 夹爪 + 动作 + 笔压</li>
+          <li>安全盒软边界 + 关节软限位，接近边界按剩余空间减速</li>
+        </ul>
+      </article>
+      <article class="morph-step" data-step="2">
+        <p class="step-kicker">③ 平台层 · 质检与打包</p>
+        <h3>不合格的进不了数据集</h3>
+        <ul>
+          <li>硬门：丢帧 &lt;2%、限位占用 &lt;5%、时长 1–120s、成功标记</li>
+          <li>评分卡：平滑度 / 完整性 / 同步 / 安全 / 隐私 → A·B·C·F</li>
+          <li>产物：<code>data/chunk-000/episode_*.parquet</code> + 视频 + meta.jsonl</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 分层（滚动 3D 导航） ============================ -->
+<section class="section section-fly" id="stack">
+  <div class="section-head reveal">
+    <p class="kicker">03 / 架构</p>
+    <h2>滚动穿过四层</h2>
+    <p class="section-sub">输入 → 采集 → 平台 → 商业。每一层都在仓库里有对应代码。</p>
+  </div>
+
+  <!-- 部署形态：回答"谁需要 Ubuntu" -->
+  <div class="deploy reveal">
+    <div class="dep-box">
+      <header><span>操作端</span><i>你坐的地方</i></header>
+      <p class="dep-role">Mac / Windows / 浏览器</p>
+      <ul>
+        <li>桌面 GUI 或网页（同一套 REST + WS）</li>
+        <li>数位板：绝对坐标 + 落笔离合</li>
+        <li class="ok">不装 ROS、不碰 Ubuntu、不编译 workspace</li>
+      </ul>
+    </div>
+    <div class="dep-link"><b>WS / HTTP</b><span>本机或局域网</span></div>
+    <div class="dep-box">
+      <header><span>采集盒</span><i>设备侧</i></header>
+      <p class="dep-role">Ubuntu RT + Docker 镜像</p>
+      <ul>
+        <li>100Hz 控制环 · 录制 · 质检 · 打包 · 回放</li>
+        <li>安全盒 / 软限位 / 力矩保护 / 归零</li>
+        <li class="ok">驱动与依赖都收在盒子里，用户永远不用碰</li>
+      </ul>
+    </div>
+    <div class="dep-link"><b>CAN 1 Mbps</b><span>USB 适配器</span></div>
+    <div class="dep-box">
+      <header><span>机械臂</span><i>被控对象</i></header>
+      <p class="dep-role">B601-RS · 6 关节 + 夹爪</p>
+      <ul>
+        <li>RS06×3 / RS00×4，48V，754mm 臂展</li>
+        <li>腕部相机 640×480 30fps 随 episode 入库</li>
+        <li class="ok">不需要主臂（无需示教臂）</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="fly" id="fly">
+    <div class="fly-stage" id="flyStage">
+      <article class="fly-layer" style="--i:0">
+        <header><span>输入层</span><i>input</i></header>
+        <h3>数位板 / 手柄 / 手势</h3>
+        <p>绝对坐标 + 落笔离合；手势（张开手/握拳）做夹爪行程兜底。</p>
+        <ul><li>数位板 · 笔压 + 右键</li><li>6-DoF 手柄（规划）</li><li>电脑摄像头手势</li></ul>
+      </article>
+      <article class="fly-layer" style="--i:1">
+        <header><span>采集层</span><i>capture</i></header>
+        <h3>控制环 + 录制 + 质检</h3>
+        <p>100Hz 控制环把笔动作变成 MIT 指令，同时落盘关节/力矩/笔压。</p>
+        <ul><li>最小 jerk + 安全盒</li><li>episode 自动落盘</li><li>硬门 + 评分卡</li></ul>
+      </article>
+      <article class="fly-layer" style="--i:2">
+        <header><span>平台层</span><i>platform</i></header>
+        <h3>数据集打包与回放</h3>
+        <p>Parquet + 视频 + meta（LeRobot 风格），一条命令回放复现。</p>
+        <ul><li>datasets/ 目录规范</li><li>MANIFEST sha256 溯源</li><li>1×/2×/4× 回放</li></ul>
+      </article>
+      <article class="fly-layer" style="--i:3">
+        <header><span>商业层</span><i>market</i></header>
+        <h3>可交付的数据包</h3>
+        <p>带设备档案、质量分、授权字段的数据包 —— 卖工具，也卖标准。</p>
+        <ul><li>工具 + 服务 + 数据</li><li>质量分可交易</li><li>溯源待接签名</li></ul>
+      </article>
+    </div>
+    <p class="fly-hint">继续滚动 → 穿过下一层</p>
+  </div>
+</section>
+
+<!-- ============================ 拖拽物理 ============================ -->
+<section class="section section-play" id="play">
+  <div class="section-head reveal">
+    <p class="kicker">04 / 质量门</p>
+    <h2>把留档拖进数据集</h2>
+    <p class="section-sub">只有过了硬门的 episode 才能进数据集 —— 拖起来试试，松手会有惯性。</p>
+  </div>
+
+  <div class="play-wrap reveal">
+    <canvas id="playCanvas"></canvas>
+    <div class="play-hud">
+      <div class="play-stat"><span>原始留档</span><b id="playRaw">7</b></div>
+      <div class="play-stat"><span>已入库</span><b id="playPacked">0</b></div>
+      <div class="play-stat"><span>数据集</span><b id="playLabels">—</b></div>
+      <button class="btn btn-ghost" id="playReset" type="button">重置</button>
+    </div>
+    <p class="play-tip">提示：把方块拖进右侧的「datasets/」框 —— 等级 A/B 的会被吸进去，F 级弹回来。</p>
+  </div>
+</section>
+
+<!-- ============================ 实测（数据 + 素材） ============================ -->
+<section class="section" id="proof">
+  <div class="section-head reveal">
+    <p class="kicker">05 / 实测</p>
+    <h2>不是 PPT：真机跑出来的数字</h2>
+    <p class="section-sub">下面每个数字都来自仓库里 <code>data/</code> 下的真实文件。</p>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card reveal" data-spot>
+      <h3>采集指标（真机）</h3>
+      <table class="data-table">
+        <tbody>
+          <tr><th>落盘帧率</th><td>92.8 – 93.1 fps（控制环 100Hz）</td></tr>
+          <tr><th>丢帧率</th><td>0.00%（上限 2%）</td></tr>
+          <tr><th>限位占用</th><td>0.00%（上限 5%）</td></tr>
+          <tr><th>最大时间跳变</th><td>14.5 – 17.7 ms（上限 50ms）</td></tr>
+          <tr><th>episode 时长</th><td>32 – 59 s（单条）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card reveal" data-spot>
+      <h3>数据集现状</h3>
+      <table class="data-table">
+        <tbody>
+          <tr><th>数据集</th><td>4 个（7 条 episode）</td></tr>
+          <tr><th>数据量</th><td>7 集 / 28,245 帧</td></tr>
+          <tr><th>成功标记</th><td>6 条成功 · 1 条失败留档</td></tr>
+          <tr><th>质量分</th><td>78.7 – 85.6（A×1 / B×4 / F×2）</td></tr>
+          <tr><th>溯源</th><td>MANIFEST.json + 每条 sha256</td></tr>
+        </tbody>
+      </table>
+      <p class="card-foot">注：评分卡仍缺「运动覆盖」维度 —— 静止录制也可能拿高分，
+        已列入下方「边界」。上表是现状，不是结论。</p>
+    </div>
+  </div>
+
+  <div class="grid grid-2 shots">
+    <figure class="shot reveal">
+      <img src="assets/traj.jpg" alt="一条真实 episode 的 7 自由度动作曲线" loading="lazy" />
+      <figcaption><b>真实动作曲线</b>6 关节 + 夹爪，来自 <code>data/episodes/20260923_135010</code>（5510 帧 / 59.4s）；每个关节按自身范围缩放，否则小幅运动会被压成直线</figcaption>
+    </figure>
+    <figure class="shot reveal">
+      <img src="assets/gui_panel.jpg" alt="控制面板：相机、关节、质量、历史数据" loading="lazy" />
+      <figcaption><b>控制面板</b>相机 / 关节条 / 质量灯 / 历史数据（磁盘上的数据集可点击回放）</figcaption>
+    </figure>
+  </div>
+
+  <div class="grid grid-2 shots">
+    <figure class="shot small reveal">
+      <img src="assets/wrist.webp" alt="腕部相机画面：夹爪接近毛绒玩具" loading="lazy" />
+      <figcaption><b>腕部相机</b>640×480 · 30fps · 随 episode 一起入库（动图为 24 帧采样）</figcaption>
+    </figure>
+    <div class="card reveal" data-spot>
+      <h3>一条 episode 里有什么</h3>
+      <pre class="tree">data/
+├── chunk-000/
+│   └── episode_000001.parquet   ← 关节/力矩/动作/笔压
+├── videos/
+│   └── observation.images.wrist/
+│       └── episode_000001.mp4
+└── meta/
+    ├── info.json       fps / features / frames
+    ├── episodes.jsonl  每条：等级 · 分数 · 成功 · 时长
+    ├── tasks.jsonl     语言指令
+    └── rebot_meta.json 设备档案 + 质检 + 授权字段</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ 安全 ============================ -->
+<section class="section section-safety">
+  <div class="section-head reveal">
+    <p class="kicker">06 / 安全</p>
+    <h2>真机事故换来的五条规矩</h2>
+    <p class="section-sub">我们被打断后失能掉落、切模式空窗下坠各出过一次，都改进了。</p>
+  </div>
+  <div class="grid grid-3">
+    <article class="card tilt reveal" data-spot><h3>启动零位门</h3><p>距零位 &gt;0.05 rad 拒绝使能（不动、不失能）—— 先归零再起服务。</p></article>
+    <article class="card tilt reveal" data-spot><h3>全走最小 jerk</h3><p>归零、走位、回放都用 10a³−15a⁴+6a⁵ 曲线，没有阶跃。</p></article>
+    <article class="card tilt reveal" data-spot><h3>退出不失能</h3><p>退出/Ctrl+C 先平滑归零再退出；失能只允许在 park 位附近。</p></article>
+    <article class="card tilt reveal" data-spot><h3>力矩保护</h3><p>任一路 &gt;25 N·m 立即中止并原地保持；回放同样受保护。</p></article>
+    <article class="card tilt reveal" data-spot><h3>软边界</h3><p>安全盒接近边界按剩余空间成比例减速 —— 能贴边，不会越界。</p></article>
+    <article class="card tilt reveal" data-spot><h3>抬笔即停</h3><p>0.4s 无笔输入视为抬笔；肘部软限位 1.5°，QD ≤ 1.0 rad/s。</p></article>
+  </div>
+</section>
+
+<!-- ============================ 边界 ============================ -->
+<section class="section section-limits" id="limits">
+  <div class="section-head reveal">
+    <p class="kicker">07 / 边界</p>
+    <h2>还没做的，也写在这里</h2>
+    <p class="section-sub">今天能演示的与还不能的，分清楚比吹得更响重要。</p>
+  </div>
+  <div class="limits">
+    <div class="limit reveal"><span class="tag tag-do">已跑通</span><p>真机遥操采集 → 质检 → 打包 → 回放；7 电机 / 4 数据集可查</p></div>
+    <div class="limit reveal"><span class="tag tag-todo">评分缺陷</span><p>评分卡缺「运动覆盖」维度：静止录制也能拿高分（现有一条 A 级 episode 就是全静止的），需要补覆盖度/有效行程判据</p></div>
+    <div class="limit reveal"><span class="tag tag-todo">未接入</span><p>训练链路（ACT 等）：仓库里只有数据与回放，没有训练代码</p></div>
+    <div class="limit reveal"><span class="tag tag-todo">未对齐</span><p>数据集是 LeRobot 风格，但未逐字段对齐 v3，需要转换器</p></div>
+    <div class="limit reveal"><span class="tag tag-todo">待加</span><p>多路同录（wrist + scene）：当前只录选中的那一路相机</p></div>
+    <div class="limit reveal"><span class="tag tag-todo">待接</span><p>自动成功判定（夹爪力/位置）、设备序列号与标定哈希签名</p></div>
+    <div class="limit reveal"><span class="tag tag-todo">规模</span><p>现有 6 条成功样本；单任务可用训练量需 ≥50 条</p></div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div>
+      <strong>reBot 采集端</strong>
+      <p class="muted">数位板遥操 · 自动质检 · LeRobot 风格打包</p>
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/voicepeak/2026Evomap-hackathon" target="_blank" rel="noopener">GitHub 仓库 ↗</a>
+      <a href="#top">回到顶部</a>
+    </div>
+    <p class="muted small">2026 Evomap Hackathon · 数据与截图均来自本机真实运行</p>
+  </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

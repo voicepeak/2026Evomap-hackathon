@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" /><title>poster</title>
+<style>html,body{margin:0;background:#0a0d13;overflow:hidden}
+#host{position:relative;width:1100px;height:1100px}
+#c{display:block;width:1100px;height:1100px}</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="host"><canvas id="c"></canvas></div>
+<script type="module">
+import { initScene3D } from "./scene3d.js";
+const host = document.getElementById("host");
+const canvas = document.getElementById("c");
+const badge = document.createElement("span");
+try {
+  const scene = await initScene3D({ canvas, badge, poster: null, onStep: () => {} });
+  scene.setProgress(0.45);
+  await new Promise((r) => setTimeout(r, 3000));   // 等 lerp 收敛
+  document.title = "ready";
+} catch (e) {
+  document.title = "error: " + e.message;
+  console.error(e);
+}
+</script>
+</body>
+</html>
