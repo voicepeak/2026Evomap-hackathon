@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RDP 采集端 · rebot-capture</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="health-dot"></span>
+      <strong>RDP 采集端</strong>
+      <span class="muted" id="version">v-</span>
+    </div>
+    <div class="status-chips" id="status-chips"></div>
+  </header>
+
+  <main class="grid">
+    <!-- 左列：输入 + 相机 -->
+    <section class="col">
+      <div class="card">
+        <div class="card-head">
+          <h2>遥操作输入</h2>
+          <span class="muted" id="pen-hz">0 Hz</span>
+        </div>
+        <div id="pad" class="pad">
+          <div class="pad-crosshair"></div>
+          <div class="pad-hint">在此区域用数位板笔 / 鼠标拖动<br /><small>落笔 = 跟手 · 抬笔 = 悬停</small></div>
+        </div>
+        <div class="row muted small">
+          <span>pressure <b id="pen-p">0.00</b></span>
+          <span>tilt <b id="pen-tilt">0,0</b></span>
+          <span id="pen-touch">抬笔</span>
+          <button id="btn-zmode" class="btn small ghost">升降模式：关</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>相机</h2><span class="muted small" id="cam-status">未连接</span></div>
+        <div class="camera">
+          <img id="cam-stream" alt="" />
+          <div class="camera-hint" id="cam-hint">点「探测相机」→ 选设备 → 预览</div>
+        </div>
+        <div class="row muted small" style="margin-top:8px; gap:8px; display:flex; align-items:center; flex-wrap:wrap;">
+          <button id="btn-cam-probe" class="btn small">探测相机</button>
+          <span id="cam-list"></span>
+          <button id="btn-cam-close" class="btn small ghost">关闭相机</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 中列：关节 + 质量 + 录制 -->
+    <section class="col">
+      <div class="card">
+        <div class="card-head"><h2>关节状态</h2><span class="muted small" id="fps-line">0 fps</span></div>
+        <div id="joints" class="joints"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>质量</h2></div>
+        <div class="lights">
+          <span class="light" id="light-drop">丢帧</span>
+          <span class="light" id="light-limit">限位</span>
+          <span class="light" id="light-smooth">平滑</span>
+          <span class="light" id="light-occlusion">遮挡</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>遥操控制</h2>
+          <span class="muted small" id="core-status">—</span>
+        </div>
+        <div class="controls">
+          <button id="c-freeze" class="btn">冻结 (Space)</button>
+          <button id="c-speed" class="btn">速度：中 (F)</button>
+          <button id="c-mode" class="btn">模式：位置 (O)</button>
+          <button id="c-float" class="btn">悬停 (H)</button>
+          <button id="c-align" class="btn ghost">对齐 (R)</button>
+        </div>
+        <div class="controls" id="core-joints" style="margin-top:8px"></div>
+        <div class="controls" id="core-presets" style="margin-top:8px"></div>
+        <div class="muted small" id="core-msg" style="margin-top:6px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>录制</h2>
+          <span class="badge" id="rec-state">空闲</span>
+        </div>
+        <div class="controls">
+          <button id="btn-session" class="btn">开始会话</button>
+          <button id="btn-start" class="btn primary" disabled>开始 Episode</button>
+          <button id="btn-stop" class="btn danger" disabled>结束（成功）</button>
+          <button id="btn-stop-fail" class="btn" disabled>结束（失败）</button>
+          <button id="btn-discard" class="btn ghost" disabled>丢弃</button>
+          <button id="btn-park" class="btn ghost">回零悬停</button>
+        </div>
+        <div class="row muted small" id="session-info">未开始会话</div>
+        <div class="controls" style="margin-top:10px">
+          <span class="muted small" style="align-self:center">回放：</span>
+          <button id="btn-replay-1" class="btn small">1×</button>
+          <button id="btn-replay-2" class="btn small">2×</button>
+          <button id="btn-replay-4" class="btn small">4×</button>
+          <span id="replay-status" class="muted small"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 右列：任务 + episode 列表 + 打包 -->
+    <section class="col">
+      <div class="card">
+        <div class="card-head"><h2>任务卡</h2><span class="muted small">占位</span></div>
+        <div class="task">
+          <div class="task-title">抓取 - 放置（桌面）</div>
+          <div class="task-meta">目标 30 条 · 质量 ≥ B · 奖励 ¥ —</div>
+          <div class="bar"><div class="bar-fill" id="task-progress" style="width:0%"></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Episode 列表</h2>
+          <button id="btn-pack" class="btn small">打包数据集</button>
+        </div>
+        <div id="episodes" class="episodes"><div class="muted small">暂无数据</div></div>
+        <div id="pack-result" class="muted small"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
