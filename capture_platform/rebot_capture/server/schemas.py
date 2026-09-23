@@ -60,6 +60,14 @@ class JointIn(BaseModel):
     hold: float | None = Field(None, description="关节直控速度 rad/s（0=松开）")
 
 
+class MotorIn(BaseModel):
+    index: int = Field(..., ge=0, le=6, description="0-5=J1-J6，6=夹爪；进入笔控直控模式")
+
+
+class GestureIn(BaseModel):
+    on: bool | None = Field(None, description="True=启用手势夹爪，False=停用，省略=查询当前状态")
+
+
 class PresetIn(BaseModel):
     action: str = Field(..., pattern="^(record|goto)$")
     index: int = Field(..., ge=1, le=4)
@@ -94,3 +102,4 @@ class ReplayIn(BaseModel):
     tau_abort: float = Field(25.0, gt=0.0)
     dataset_path: str | None = Field(None, description="从已打包数据集回放（服务重启后可用）")
     max_joint_speed_deg: float = Field(220.0, gt=0.0, le=720.0, description="指令关节速度上限（°/s）")
+

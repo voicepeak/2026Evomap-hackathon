@@ -30,6 +30,7 @@ def episode_rows(ep: Episode) -> list[dict[str, Any]]:
             "timestamp": float(ep.t[i] - ep.t[0]),
             "success": bool(ep.success),
             "gripper.pos": float(ep.grip[i]),
+            "action.gripper": float(ep.action[i, ep.pos.shape[1]]),
             "pen.pressure": float(ep.pen_pressure[i]),
             "pen.touching": bool(ep.pen_touching[i]),
         }

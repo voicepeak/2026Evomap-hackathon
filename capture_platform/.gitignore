@@ -1,5 +1,5 @@
-# 运行产物：数据集与原始 episode 需要入库；仅忽略日志与临时文件
-data/logs/
+# 运行产物
+data/
 *.pyc
 __pycache__/
 

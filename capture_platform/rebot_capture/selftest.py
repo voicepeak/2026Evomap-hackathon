@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import math
+import uuid
 
 import numpy as np
 
@@ -93,7 +94,7 @@ def run_selftest(verbose: bool = True) -> int:
     bad = [r for r in results if r["grade"] == "F"]
     ok = len(good) >= 2 and len(bad) >= 1
 
-    pack = service.pack(name="selftest_dataset", task_instruction="selftest: pick and place")
+    pack = service.pack(name=f"selftest_dataset_{uuid.uuid4().hex[:12]}", task_instruction="selftest: pick and place")
     v = verify_dataset(pack["path"])
     log("")
     log(f"打包: {pack['dataset']}  {pack['episodes']} 集 / {pack['frames']} 帧 / {pack['size_mb']} MB")

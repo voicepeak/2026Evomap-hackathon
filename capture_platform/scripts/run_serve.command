@@ -1,9 +1,14 @@
 #!/bin/zsh
-# 在 Terminal 里启动平台服务（继承 Terminal 的相机权限）
-# 用法：双击本文件，或 osascript 让 Terminal 执行它
-cd "/Users/Admin/Documents/Default Project/rebot_capture" || exit 1
-echo "=== rebot-capture serve 启动 $(date '+%H:%M:%S') ===" | tee /tmp/rebot_serve.log
-exec .venv/bin/rebot-capture serve \
+# 从当前工作区启动，继承 Terminal 的相机权限。
+set -eu
+CAPTURE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ARM_REPO="$(cd "$CAPTURE_DIR/../arm_control" && pwd)"
+cd "$CAPTURE_DIR"
+exec > >(tee -a /tmp/rebot_workspace_serve.log) 2>&1
+printf '\n=== rebot-capture serve %s ===\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+exec "$CAPTURE_DIR/.venv/bin/rebot-capture" serve \
   --backend rebot \
-  --arm-repo /Users/Admin/Desktop/reBotArm_control_py \
-  --port 8787 2>&1 | tee -a /tmp/rebot_serve.log
+  --arm-repo "$ARM_REPO" \
+  --gesture-camera 2 \
+  --host 127.0.0.1 \
+  --port 8787

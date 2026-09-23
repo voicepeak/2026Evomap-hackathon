@@ -98,11 +98,11 @@ class EpisodeRecorder:
     # ------------------------------------------------------------------ #
     def add(self, state: JointState, pen: PenSample | None, action: np.ndarray) -> None:
         self._t.append(time.time())
-        self._pos.append(np.asarray(state.pos, dtype=float))
-        self._vel.append(np.asarray(state.vel, dtype=float))
-        self._tau.append(np.asarray(state.tau, dtype=float))
+        self._pos.append(np.asarray(state.pos, dtype=float).copy())
+        self._vel.append(np.asarray(state.vel, dtype=float).copy())
+        self._tau.append(np.asarray(state.tau, dtype=float).copy())
         self._grip.append(float(state.grip))
-        self._action.append(np.asarray(action, dtype=float).reshape(-1))
+        self._action.append(np.asarray(action, dtype=float).reshape(-1).copy())
         self._pen_p.append(float(pen.pressure) if pen else 0.0)
         self._pen_touch.append(bool(pen.touching) if pen else False)
 

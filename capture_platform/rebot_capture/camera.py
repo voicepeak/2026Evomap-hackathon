@@ -183,6 +183,11 @@ class Camera:
         with self._lock:
             return self._jpeg
 
+    def frame(self) -> np.ndarray | None:
+        """最近一帧原始画面（复制一份，供识别线程使用）。"""
+        with self._lock:
+            return None if self._frame is None else self._frame.copy()
+
     def status(self) -> dict:
         return {
             "index": self.index,
@@ -312,9 +317,16 @@ class CameraHub:
         cam = self.current
         return cam.stop_recording() if cam else None
 
-    def snapshot(self) -> bytes | None:
-        cam = self.current
+    def get(self, key: Any | None = None) -> Camera | None:
+        return self.cameras.get(self.selected if key is None else key)
+
+    def snapshot(self, key: Any | None = None) -> bytes | None:
+        cam = self.get(key)
         return cam.snapshot() if cam else None
+
+    def frame(self, key: Any | None = None) -> np.ndarray | None:
+        cam = self.get(key)
+        return cam.frame() if cam else None
 
     def status(self) -> dict:
         return {

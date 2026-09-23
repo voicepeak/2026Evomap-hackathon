@@ -220,6 +220,12 @@ class RealArm:
             g["send"] = float(g["held"])
 
     # ------------------------------------------------------------------ #
+    def grip_target(self) -> float:
+        """返回最近实际下发的归一化夹爪目标，供动作录制使用。"""
+        if self._grip is None:
+            return 0.0
+        return float(np.clip((self._grip["send"] - GRIP_LO) / (GRIP_HI - GRIP_LO), 0.0, 1.0))
+
     def grip_rad(self) -> float:
         """夹爪绝对角度（rad，上游 teleop_core 的坐标）。"""
         if self._grip is None:

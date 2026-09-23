@@ -10,7 +10,8 @@ const state = {
   recording: false,
   sessionActive: false,
   taskTarget: 30,
-  zMode: false,
+  cartesianMode: "pos",   // 记住位置/姿态，供右键在"电机直控"之后切回
+  gesture: null,
   touching: false,
   lastSample: null,
   camSrcIndex: null,
@@ -129,15 +130,13 @@ function setLight(id, on, cls) {
 function updateButtons() {
   const rec = state.recording;
   const ses = state.sessionActive;
+  const n = state.live?.episodes ?? 0;
   $("btn-session").textContent = ses ? "结束会话" : "开始会话";
   $("btn-start").disabled = rec;
   $("btn-stop").disabled = !rec;
   $("btn-stop-fail").disabled = !rec;
   $("btn-discard").disabled = !rec;
-  $("session-info").textContent = ses
-    ? "会话进行中"
-    : "未开始会话";
-  const n = state.live?.episodes ?? 0;
+  $("session-info").textContent = (ses ? "会话进行中" : "未开始会话") + ` · 已录 ${n} 条`;
   $("task-progress").style.width = Math.min(100, (n / state.taskTarget) * 100) + "%";
 }
 
@@ -172,6 +171,90 @@ async function postJSON(path, body) {
   return api(path, "POST", body || {});
 }
 
+/* 画板中央短暂提示（切换时不用去看侧边标签） */
+const MOTOR_LABELS = ["J1 肩部水平", "J2 肩部俯仰", "J3 肘部俯仰",
+                      "J4 腕部俯仰", "J5 腕部偏航", "J6 腕部自转", "夹爪（待摄像头）"];
+function padToast(text) {
+  const el = $("pad-toast");
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add("show");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove("show"), 1000);
+}
+
+/* 模式/电机切换：O 键、模式按钮、笔侧键共用同一套逻辑 */
+async function toggleCartesianMode() {
+  const t = state.live?.teleop || {};
+  const base = t.mode === "pos" || t.mode === "ori" ? t.mode : (state.cartesianMode || "pos");
+  const next = base === "ori" ? "pos" : "ori";
+  state.cartesianMode = next;
+  padToast(next === "ori" ? "姿态模式" : "位置模式");
+  try { await postJSON("/api/teleop/mode", { mode: next }); } catch (_) {}
+}
+
+async function cycleMotor() {
+  const t = state.live?.teleop || {};
+  const cur = Number.isInteger(t.joint_index) ? t.joint_index : 3;
+  const next = (cur + 1) % 7;
+  padToast(`电机 ${MOTOR_LABELS[next]}`);
+  try { await postJSON("/api/teleop/motor", { index: next }); } catch (_) {}
+}
+
+/* 控制端整屏：首次触板自动进入，另有按钮可切换 */
+let fullscreenTried = false;
+async function autoFullscreen() {
+  if (fullscreenTried || document.fullscreenElement) return;
+  fullscreenTried = true;
+  try { await document.documentElement.requestFullscreen(); } catch (_) {}
+}
+
+/* 视图切换：全屏遥操作 ↔ 控制面板（相机/关节/数据集） */
+function releasePen() {
+  if (!state.touching) return;
+  state.touching = false;
+  if (state.wsTeleop && state.wsTeleop.readyState === 1 && state.lastSample) {
+    state.lastSample.t = performance.now() / 1000;
+    state.lastSample.touching = false;
+    state.wsTeleop.send(JSON.stringify({ type: "pen", data: state.lastSample }));
+  }
+  const el = $("pen-touch");
+  if (el) el.textContent = "悬停";
+}
+
+function setupView() {
+  const btn = $("btn-dashboard");
+  const dash = $("dashboard");
+  const view = $("teleop-view");
+  if (!btn || !dash || !view) return;
+  const showDash = (on) => {
+    dash.classList.toggle("hidden", !on);
+    view.classList.toggle("hidden", on);
+    btn.textContent = on ? "遥操作" : "面板";
+    btn.classList.toggle("primary", on);
+    if (on) releasePen();
+  };
+  btn.onclick = () => showDash(dash.classList.contains("hidden"));
+  if (new URLSearchParams(location.search).has("panel")) showDash(true);
+}
+
+function setupFullscreen() {
+  const btn = $("btn-fullscreen");
+  if (!btn) return;
+  const update = () => {
+    btn.textContent = document.fullscreenElement ? "退出全屏" : "全屏";
+    btn.classList.toggle("primary", !!document.fullscreenElement);
+  };
+  btn.onclick = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch (e) { alert("浏览器拒绝全屏：" + e.message); }
+  };
+  document.addEventListener("fullscreenchange", update);
+  update();
+}
+
 function coreButtons() {
   const jbox = $("core-joints");
   jbox.innerHTML = "";
@@ -180,34 +263,52 @@ function coreButtons() {
     b.className = "btn small";
     b.textContent = i < 6 ? `J${i + 1}` : "夹爪";
     b.dataset.joint = i;
-    b.onmousedown = async (ev) => {
-      ev.preventDefault();
-      await postJSON("/api/teleop/joint", { index: i, hold: JRATE });
-    };
-    b.onmouseup = () => postJSON("/api/teleop/joint", { hold: 0 });
-    b.onmouseleave = () => postJSON("/api/teleop/joint", { hold: 0 });
+    b.title = "点击 = 选中该电机（随后用笔尖上下/左右拖动驱动它）";
+    b.onclick = () => postJSON("/api/teleop/motor", { index: i });
     jbox.appendChild(b);
   }
-  const pbox = $("core-presets");
-  pbox.innerHTML = "";
-  for (let i = 1; i <= 4; i++) {
-    const b = document.createElement("button");
-    b.className = "btn small";
-    b.textContent = `预设${i}`;
-    b.title = "点击=前往；Shift+点击=记录";
-    b.onclick = (ev) => postJSON("/api/teleop/preset", { action: ev.shiftKey ? "record" : "goto", index: i });
-    pbox.appendChild(b);
+}
+
+function coreModeLabel(t) {
+  if (t.mode === "ori") return "姿态";
+  if (t.mode === "joint") {
+    const i = Number(t.joint_index);
+    return i >= 6 ? "电机 夹爪" : `电机 J${i + 1}`;
   }
+  return "位置";
+}
+
+function renderGesture(g) {
+  const el = $("gesture-state");
+  const btn = $("c-gesture");
+  if (!el || !btn) return;
+  if (!g) {
+    el.textContent = "未启用";
+    btn.textContent = "手势夹爪：未启用";
+    return;
+  }
+  state.gesture = g;
+  const on = !!g.enabled;
+  btn.textContent = "手势夹爪：" + (on ? "开" : "关");
+  btn.classList.toggle("primary", on);
+  let txt = on ? "未检测到手" : "已关闭";
+  if (g.error) txt = "错误：" + String(g.error).slice(0, 40);
+  else if (g.gesture === "open") txt = "张开手 → 张开行程";
+  else if (g.gesture === "fist") txt = "握拳 → 闭合行程";
+  else if (g.raw) txt = `看到 ${g.raw}`;
+  el.textContent = txt;
 }
 
 function renderCore(t) {
   if (!t) return;
+  if (t.mode === "pos" || t.mode === "ori") state.cartesianMode = t.mode;
+  const label = coreModeLabel(t);
   $("core-status").textContent =
-    `${t.mode === "ori" ? "姿态" : "位置"}${t.freeze ? " · 冻结" : ""}${t.float ? " · 悬停" : ""} · ${t.rate_hz}Hz`;
+    `${label}${t.freeze ? " · 冻结" : ""}${t.float ? " · 悬停" : ""} · ${t.rate_hz}Hz`;
   $("c-freeze").textContent = t.freeze ? "解冻 (Space)" : "冻结 (Space)";
   $("c-freeze").classList.toggle("danger", !!t.freeze);
   $("c-speed").textContent = `速度：${SPEED_NAMES[t.speed_index] ?? "?"} (F)`;
-  $("c-mode").textContent = `模式：${t.mode === "ori" ? "姿态" : "位置"} (O)`;
+  $("c-mode").textContent = `模式：${label} (O)`;
   $("c-float").classList.toggle("primary", !!t.float);
   $("core-msg").textContent = t.alarm || t.msg || "";
   document.querySelectorAll("#core-joints button").forEach((b) => {
@@ -233,8 +334,40 @@ function cameraButtons(cam) {
   });
 }
 
+/* 全屏界面里的两路小画面：腕部相机 + 电脑摄像头 */
+function renderCamTiles(cam) {
+  const opened = (cam.cameras || []).filter((c) => c.opened);
+  const arm = opened.find((c) => (c.alias || "").startsWith("wrist"))
+    || opened.find((c) => c.index === 1) || opened[0] || null;
+  const gestureCam = state.gesture ? state.gesture.camera : null;   // 电脑摄像头（手势那路）
+  const mac = opened.find((c) => c.index === gestureCam)
+    || opened.find((c) => !arm || c.index !== arm.index) || null;
+  setCamTile("cam-a", arm, "腕部");
+  setCamTile("cam-b", mac, "电脑");
+}
+
+function setCamTile(id, c, labelText) {
+  const img = $(id);
+  if (!img) return;
+  const label = $(id + "-label");
+  if (!c) {
+    img.classList.remove("live");
+    delete img.dataset.index;
+    img.removeAttribute("src");
+    if (label) label.textContent = `${labelText} · 未连接`;
+    return;
+  }
+  if (img.dataset.index !== String(c.index)) {
+    img.dataset.index = String(c.index);
+    img.src = "/api/camera/stream?index=" + c.index;
+  }
+  img.classList.add("live");
+  if (label) label.textContent = `${c.alias || ("cam" + c.index)} · ${c.fps_actual} fps`;
+}
+
 function renderCamera(cam) {
   if (!cam) return;
+  renderCamTiles(cam);
   const st = $("cam-status"), img = $("cam-stream"), hint = $("cam-hint");
   const opened = (cam.cameras || []).filter((c) => c.opened);
   const cur = opened.find((c) => c.index === cam.selected) || null;
@@ -268,7 +401,7 @@ function teleopKeys() {  const S = () => state.live?.teleop || {};
     switch (e.code) {
       case "Space": e.preventDefault(); await postJSON("/api/teleop/freeze", {}); break;
       case "KeyF": await postJSON("/api/teleop/speed", {}); break;
-      case "KeyO": await postJSON("/api/teleop/mode", { mode: t.mode === "ori" ? "pos" : "ori" }); break;
+      case "KeyO": await toggleCartesianMode(); break;
       case "KeyH": await postJSON("/api/teleop/float", { on: !t.float }); break;
       case "KeyR": await postJSON("/api/teleop/align", {}); break;
       case "KeyQ": await postJSON("/api/teleop/joint", { hold: JRATE }); break;
@@ -278,10 +411,6 @@ function teleopKeys() {  const S = () => state.live?.teleop || {};
       case "Comma": await postJSON("/api/teleop/twist", { value: -TW }); break;
       case "Period": await postJSON("/api/teleop/twist", { value: TW }); break;
       case "Escape": await postJSON("/api/teleop/freeze", { on: true }); break;
-      default: {
-        const m = /^Digit([1-4])$/.exec(e.code);
-        if (m) await postJSON("/api/teleop/preset", { action: e.shiftKey ? "record" : "goto", index: Number(m[1]) });
-      }
     }
   });
   window.addEventListener("keyup", async (e) => {
@@ -313,7 +442,6 @@ function setupPad() {
         tiltY: 0,
         twist: ev.twist || 0,
         touching,
-        shift: state.zMode,
       },
     };
     state.touching = touching;
@@ -321,8 +449,7 @@ function setupPad() {
     state.wsTeleop.send(JSON.stringify(sample));
 
     $("pen-p").textContent = (sample.data.pressure || 0).toFixed(2);
-    $("pen-tilt").textContent = "0,0";
-    $("pen-touch").textContent = touching ? (state.zMode ? "落笔·升降" : "落笔") : "悬停";
+    $("pen-touch").textContent = touching ? "落笔" : "悬停";
 
     if (!cursor) {
       cursor = document.createElement("div");
@@ -341,12 +468,50 @@ function setupPad() {
     state.wsTeleop.send(JSON.stringify({ type: "pen", data: state.lastSample }));
   }, 20);
 
+  // 笔右键（不区分悬空/落笔）：单击 = 切换电机，长按 = 切换模式
+  const RIGHT_HOLD_MS = 500;
+  let rightTimer = null;
+  let rightLongFired = false;
+  pad.addEventListener("contextmenu", (ev) => ev.preventDefault());
   pad.addEventListener("pointerdown", (ev) => {
+    autoFullscreen();
+    if (ev.button === 2) {                     // 右键：按下计时，长按到点先切模式
+      ev.preventDefault();
+      pad.setPointerCapture?.(ev.pointerId);
+      rightLongFired = false;
+      clearTimeout(rightTimer);
+      rightTimer = setTimeout(() => {
+        rightTimer = null;
+        rightLongFired = true;
+        toggleCartesianMode();
+      }, RIGHT_HOLD_MS);
+      return;
+    }
+    if (ev.pointerType === "pen" && ev.pressure === 0) return;   // 悬空笔按键不进入落笔
     pad.setPointerCapture?.(ev.pointerId);
     send(ev, true);
   });
   pad.addEventListener("pointermove", (ev) => send(ev, ev.buttons > 0 || ev.pointerType === "pen" ? ev.pressure > 0 : false));
-  pad.addEventListener("pointerup", (ev) => send(ev, false));
+  pad.addEventListener("pointerup", (ev) => {
+    if (ev.button === 2) {                     // 右键抬起：没到长按就是单击 → 切电机
+      clearTimeout(rightTimer);
+      rightTimer = null;
+      const wasLong = rightLongFired;
+      rightLongFired = false;
+      if (!wasLong) cycleMotor();
+      return;
+    }
+    if (ev.button !== 0) return;
+    if (!state.touching) return;
+    if (ev.pointerType === "pen" && (ev.buttons & 1)) return;  // 笔尖仍按住（侧键抬起）
+    send(ev, false);
+  });
+  pad.addEventListener("pointercancel", (ev) => {
+    clearTimeout(rightTimer);
+    rightTimer = null;
+    rightLongFired = false;
+    if (state.touching) send(ev, false);
+  });
   pad.addEventListener("pointerleave", (ev) => { if (ev.buttons === 0) send(ev, false); });
 }
 
@@ -367,6 +532,7 @@ function setupWS() {
         renderJoints();
         renderCore(payload.live?.teleop);
         renderCamera(payload.live?.camera);
+        renderGesture(payload.live?.gesture);
       } catch (_) {}
     };
     ws.onopen = () => setDot("ok");
@@ -407,20 +573,18 @@ function setupControls() {
 
   $("c-freeze").onclick = () => postJSON("/api/teleop/freeze", {});
   $("c-speed").onclick = () => postJSON("/api/teleop/speed", {});
-  $("c-mode").onclick = () => {
-    const t = state.live?.teleop || {};
-    postJSON("/api/teleop/mode", { mode: t.mode === "ori" ? "pos" : "ori" });
-  };
+  $("c-mode").onclick = () => toggleCartesianMode();
   $("c-float").onclick = () => {
     const t = state.live?.teleop || {};
     postJSON("/api/teleop/float", { on: !t.float });
   };
   $("c-align").onclick = () => postJSON("/api/teleop/align", {});
-
-  $("btn-zmode").onclick = () => {
-    state.zMode = !state.zMode;
-    $("btn-zmode").textContent = "升降模式：" + (state.zMode ? "开" : "关");
-    $("btn-zmode").classList.toggle("primary", state.zMode);
+  $("c-gesture").onclick = async () => {
+    const g = state.gesture || {};
+    try {
+      const st = await postJSON("/api/gesture", { on: !g.enabled });
+      renderGesture(st);
+    } catch (e) { alert("手势开关失败：" + e.message); }
   };
 
   $("btn-session").onclick = async () => {
@@ -509,6 +673,8 @@ async function boot() {
   setupPad();
   setupWS();
   setupControls();
+  setupView();
+  setupFullscreen();
   coreButtons();
   teleopKeys();
   updateButtons();

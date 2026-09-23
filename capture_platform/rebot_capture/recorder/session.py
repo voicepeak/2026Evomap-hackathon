@@ -42,12 +42,14 @@ class CaptureService:
         quality_cfg: QualityConfig | None = None,
         camera: Any | None = None,
         auto_save: bool = True,
+        gesture: Any | None = None,
     ):
         self.profile = profile
         self.backend = backend
         self.mapper = mapper or MockPenMapper(profile)
         self.core_mapper = mapper if getattr(mapper, "is_core", False) else None
         self.camera = camera
+        self.gesture = gesture          # 电脑摄像头手势（夹爪行程），只发布状态
         self.auto_save = bool(auto_save)
         self.fps = fps or profile.fps
         self.quality_cfg = quality_cfg or QualityConfig()
@@ -87,6 +89,11 @@ class CaptureService:
 
     def close(self) -> None:
         """退出：与上游 `spatial_teleop.py` 一致 —— 先平滑归零、**不失能**，再停止。"""
+        if self.gesture is not None:
+            try:
+                self.gesture.stop()
+            except Exception:  # noqa: BLE001
+                pass
         try:
             if self._last_state is not None:
                 dev = float(np.max(np.abs(self._last_state.pos)))
@@ -192,6 +199,7 @@ class CaptureService:
     # ================================================================== #
     def tick(self) -> None:
         with self._lock:
+            self._apply_gesture_locked()
             state = self.backend.read()
             pen = self._pen
             # 输入超时：笔样本超过 pen_timeout 没更新 → 视为抬笔（松手即停，与上游一致）
@@ -221,7 +229,8 @@ class CaptureService:
                 grip_rad = getattr(self.backend, "grip_rad", lambda: None)()
                 cmd = self.core_mapper.step(pen, state.pos, state.tau, grip_rad)
                 self.backend.send_mit(cmd.q, cmd.kp, cmd.kd, cmd.tau, grip_rad=cmd.grip_send)
-                action = np.concatenate([cmd.q, [float(state.grip)]])
+                grip_target = getattr(self.backend, "grip_target", lambda: state.grip)()
+                action = np.concatenate([cmd.q, [float(grip_target)]])
                 self._last_state = state
                 self._last_action = action
                 self._tick_times.append(time.monotonic())
@@ -238,6 +247,36 @@ class CaptureService:
 
             if self._recorder is not None:
                 self._recorder.add(state, pen, action)
+
+    # ================================================================== #
+    # 手势（电脑摄像头）→ 夹爪行程
+    # ================================================================== #
+    def _apply_gesture_locked(self) -> None:
+        """把已稳定的手势行程目标交给控制核心（限速/力矩保护由核心负责）。"""
+        if self.gesture is None or self.core_mapper is None:
+            return
+        st = self.gesture.state()
+        target = st.get("target")
+        if target is None:
+            return
+        core = self.core_mapper.core
+        if core.freeze or not core.grip_ready:
+            return
+        if abs(core.j_req) > 1e-6 and int(core.j_sel) == 6:
+            return          # 手动夹爪直控优先（Q/A 或界面按钮）
+        core.set_gripper_target(float(target))
+
+    def gesture_state(self) -> dict | None:
+        return self.gesture.state() if self.gesture is not None else None
+
+    def gesture_control(self, on: bool | None = None) -> dict | None:
+        if self.gesture is None:
+            return None
+        if on is True:
+            self.gesture.start()
+        elif on is False:
+            self.gesture.stop()
+        return self.gesture.state()
 
     def run(self, stop_event: threading.Event | None = None) -> None:
         stop_event = stop_event or self._loop_stop
@@ -328,6 +367,13 @@ class CaptureService:
             m.set_mode(mode)
         return m.state()
 
+    def teleop_motor(self, index: int) -> dict:
+        """选中电机并进入笔控直控模式（等价点 J 按钮 / 笔左键）。"""
+        m = self._require_core()
+        with self._lock:
+            m.select_motor(index)
+        return m.state()
+
     def teleop_float(self, on: bool) -> dict:
         m = self._require_core()
         with self._lock:
@@ -405,7 +451,7 @@ class CaptureService:
                 ep = self._find_episode(index)
                 src = {
                     "episode": ep.index, "frames": ep.n_frames,
-                    "action": ep.action.copy(), "t": ep.t - ep.t[0],
+                    "action": ep.action.copy(), "t": ep.t - ep.t[0] if ep.n_frames else ep.t.copy(),
                 }
         action = np.asarray(src["action"], float)
         times = np.asarray(src["t"], float)
@@ -415,6 +461,14 @@ class CaptureService:
         with self._lock:
             if self._recorder is not None:
                 raise RuntimeError("正在录制 episode，请先结束再回放")
+
+        if (action.ndim != 2 or action.shape != (n_frames, self.profile.n_motors)
+                or times.shape != (n_frames,) or n_frames == 0
+                or not np.isfinite(action).all() or not np.isfinite(times).all()
+                or times[0] < 0 or np.any(np.diff(times) <= 0)):
+            raise RuntimeError("回放数据无效：需要有限的 7 维动作和严格递增的时间戳")
+        if not all(math.isfinite(v) and v > 0 for v in (speed, tau_abort, max_joint_speed_deg)):
+            raise RuntimeError("回放速度、力矩阈值和关节速度上限必须为有限正数")
 
         q_max = float(np.max(np.abs(np.degrees(action[:, :6])))) if action.size else 0.0
         v = np.diff(action[:, :6], axis=0) / np.clip(np.diff(times)[:, None], 1e-4, None)
@@ -429,7 +483,10 @@ class CaptureService:
         }
 
         # 1) 平滑到轨迹起点（最小 jerk）
-        self.goto_smooth(action[0].copy(), duration=None)
+        approach = self.goto_smooth(action[0].copy(), duration=None, tau_abort=tau_abort)
+        if not approach.get("ok", False):
+            return {"ok": False, "aborted": True, "played": 0,
+                    "reason": "到起点运动中止，已取消回放", **stats}
 
         # 2) 按时间轴回放（带指令速度上限）
         speed = max(0.05, float(speed))
@@ -457,14 +514,11 @@ class CaptureService:
                     return {"ok": False, "aborted": True, "reason": "操作者落笔，已交还遥操", **stats}
                 frozen = bool(self.core_mapper is not None and self.core_mapper.core.freeze)
                 tau = self._last_state.tau.copy() if self._last_state is not None else None
+                if frozen or (tau is not None and float(np.max(np.abs(tau))) > tau_abort):
+                    aborted = True
+                    break
                 self._override = target
             n_played += 1
-            if frozen:
-                aborted = True
-                break
-            if tau is not None and float(np.max(np.abs(tau))) > tau_abort:
-                aborted = True
-                break
             if done and float(np.max(np.abs(last - action[-1]))) < 1e-3:
                 break
             time.sleep(dt)
@@ -487,7 +541,9 @@ class CaptureService:
             raise RuntimeError(f"数据集里没有 episode 数据：{ds}")
         if index is not None:
             want = f"episode_{int(index):06d}."
-            cand = [p for p in cand if want in p.name] or cand
+            cand = [p for p in cand if p.name.startswith(want)]
+            if not cand:
+                raise RuntimeError(f"数据集里没有 episode {index}：{ds}")
         path = cand[-1]
         rows = load_episode_rows(path)
         if not rows:
@@ -495,7 +551,7 @@ class CaptureService:
         t = np.asarray([r["timestamp"] for r in rows], float)
         keys = [n for n in JOINT_NAMES if f"action.{n}" in rows[0]]
         act = np.asarray([[r[f"action.{n}"] for n in keys] for r in rows], float)
-        grip = np.asarray([r.get("gripper.pos", 0.0) for r in rows], float)
+        grip = np.asarray([r.get("action.gripper", r.get("gripper.pos", 0.0)) for r in rows], float)
         action = np.concatenate([act, grip.reshape(-1, 1)], axis=1)
         ep_index = int(rows[0].get("episode_index", 0))
         return {"episode": ep_index, "frames": len(rows), "action": action, "t": t}
@@ -584,14 +640,18 @@ class CaptureService:
             s = _smoothstep(i / steps)
             q_t = q_from + (tgt[:n] - q_from) * s
             with self._lock:
-                self._override = np.concatenate([q_t, [grip]])
-            time.sleep(dt)
-            if i % max(1, int(0.2 * fps)) == 0:
-                with self._lock:
-                    tau = self._last_state.tau.copy() if self._last_state is not None else None
-                if tau is not None and float(np.max(np.abs(tau))) > tau_abort:
+                if (self._pen is not None and self._pen.touching
+                        and time.monotonic() - self._pen_rx < self.pen_timeout):
+                    self._override = None
+                    self._sync_mapper_to_measured()
+                    return {"ok": False, "aborted": True, "reason": "操作者落笔，已交还遥操"}
+                frozen = bool(self.core_mapper is not None and self.core_mapper.core.freeze)
+                tau = self._last_state.tau if self._last_state is not None else None
+                if frozen or (tau is not None and float(np.max(np.abs(tau))) > tau_abort):
                     aborted = True
                     break
+                self._override = np.concatenate([q_t, [grip]])
+            time.sleep(dt)
 
         with self._lock:
             if aborted:
@@ -695,6 +755,7 @@ class CaptureService:
                 "session_active": self._session is not None,
                 "teleop": self.teleop_state(),
                 "camera": self.camera.status() if self.camera is not None else None,
+                "gesture": self.gesture_state(),
             }
 
     def episodes_list(self, with_details: bool = False) -> list[dict]:

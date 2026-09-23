@@ -14,21 +14,24 @@
 }
 
 * { box-sizing: border-box; }
+html, body { height: 100%; }
 body {
   margin: 0;
   font-family: -apple-system, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
   font-size: var(--fs);
   background: var(--bg);
   color: var(--text);
-  min-height: 100vh;
+  /* 控制端整屏使用：页面不滚动，各列内部滚动 */
+  display: flex; flex-direction: column; overflow: hidden;
 }
 
 /* ---------------- topbar ---------------- */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 18px; border-bottom: 1px solid var(--line);
-  background: var(--panel); position: sticky; top: 0; z-index: 5;
+  padding: 10px 18px; border-bottom: 1px solid var(--line);
+  background: var(--panel); flex: 0 0 auto; z-index: 5;
 }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
 .brand { display: flex; align-items: center; gap: 10px; font-size: 18px; }
 .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--amber); display: inline-block; }
 .dot.ok { background: var(--green); }
@@ -42,10 +45,12 @@ body {
 }
 .chip b { color: var(--text); font-weight: 600; }
 
-/* ---------------- layout ---------------- */
+/* ---------------- layout（控制面板） ---------------- */
+#dashboard { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.hidden { display: none !important; }
 .grid {
   display: grid; grid-template-columns: 1.12fr 1.18fr 1.0fr;
-  gap: 14px; padding: 14px; align-items: start;
+  gap: 14px; padding: 14px; align-items: start; min-height: 100%;
 }
 .col { display: flex; flex-direction: column; gap: 14px; }
 .card {
@@ -54,6 +59,59 @@ body {
 }
 .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .card-head h2 { font-size: 17px; margin: 0; font-weight: 600; }
+
+/* ---------------- 遥操作全屏层 + 四角 HUD ---------------- */
+#teleop-view { position: relative; flex: 1 1 auto; min-height: 0; }
+#teleop-view .pad {
+  position: absolute; inset: 0; height: auto;
+  border: 0; border-radius: 0;
+}
+#teleop-view .pad-hint { opacity: .3; }
+
+/* HUD 用网格铺满，四角各占一格 → 结构上不会互相重叠；空白处点击透传给画板 */
+#hud-layer {
+  position: absolute; inset: 0; z-index: 4;
+  display: grid; gap: 10px; padding: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "tl .  tr"
+    ".  .  ."
+    "bl bc br";
+  pointer-events: none;
+}
+.cam-tile {
+  position: relative; width: 224px; height: 168px; border-radius: 8px;
+  overflow: hidden; background: #0a0e14; flex: 0 0 auto;
+}
+.cam-tile img { width: 100%; height: 100%; object-fit: cover; display: none; }
+.cam-tile img.live { display: block; }
+.cam-label {
+  position: absolute; left: 6px; bottom: 6px; padding: 2px 8px; border-radius: 999px;
+  background: #0d1117cc; font-size: 12px; color: var(--muted);
+}
+#hud-layer .hud { pointer-events: auto; }
+.hud {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  background: #0d1117e6; border: 1px solid var(--line); border-radius: 12px;
+  padding: 8px 12px; backdrop-filter: blur(3px);
+  min-width: 0; max-width: 100%;
+}
+.hud-tl { grid-area: tl; justify-self: start; align-self: start; }
+.hud-bl { grid-area: bl; justify-self: start; align-self: end; }
+.hud-bc { grid-area: bc; justify-self: center; align-self: end; }
+.hud-br { grid-area: br; justify-self: end; align-self: end; }
+.hud-stack { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.hud-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.hud .btn { min-height: 32px; padding: 5px 10px; font-size: 13px; }
+.hud-btns .btn { min-width: 46px; }
+.hud-title { font-size: 15.5px; font-weight: 600; }
+.hud-sub {
+  font-size: 13px; color: var(--muted); max-width: 34vw;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hud-btns { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.hud-sep { width: 1px; align-self: stretch; min-height: 20px; background: var(--line); }
 
 /* ---------------- pen pad ---------------- */
 .pad {
@@ -80,6 +138,13 @@ body {
   border: 2.5px solid var(--blue); transform: translate(-50%, -50%);
   pointer-events: none; opacity: 0.9;
 }
+.pad-toast {
+  position: absolute; left: 50%; top: 30%; transform: translateX(-50%);
+  padding: 8px 20px; border-radius: 999px; font-size: 20px; font-weight: 600;
+  background: #1f2937e6; border: 1px solid var(--blue); color: var(--text);
+  opacity: 0; transition: opacity .15s ease; pointer-events: none; white-space: nowrap;
+}
+.pad-toast.show { opacity: 1; }
 
 /* ---------------- camera ---------------- */
 .camera {
@@ -152,4 +217,6 @@ body {
 
 @media (max-width: 1180px) {
   .grid { grid-template-columns: 1fr; }
+  .hud { max-width: 92vw; }
+  .hud-bc { left: 12px; right: 12px; transform: none; max-width: none; }
 }

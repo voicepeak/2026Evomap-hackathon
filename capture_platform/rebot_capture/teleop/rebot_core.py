@@ -90,6 +90,10 @@ class RebotCoreMapper:
     def set_mode(self, mode: str) -> None:
         self.core.set_mode(mode)
 
+    def select_motor(self, index: int) -> None:
+        """平台扩展：选中电机并进入直控（笔左键循环 / 点 J 按钮）。"""
+        self.core.select_motor(int(index))
+
     def set_float(self, on: bool) -> None:
         self.core.set_float(on)
 

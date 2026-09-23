@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -30,9 +31,11 @@ from .schemas import (
     EpisodeStopIn,
     FloatIn,
     FreezeIn,
+    GestureIn,
     GotoIn,
     JointIn,
     ModeIn,
+    MotorIn,
     PackIn,
     PenSampleIn,
     PresetIn,
@@ -51,6 +54,8 @@ def create_app(
     arm_repo: str | None = None,
     limit_margin_deg: float = 1.5,
     allow_nonzero_start: bool = False,
+    gesture_camera: int | None = 0,
+    gesture: bool = True,
 ) -> FastAPI:
     profile = DeviceProfile.load(profile_path)
     mapper = None
@@ -75,9 +80,23 @@ def create_app(
     else:
         raise ValueError(f"未知 backend: {backend}（可选 mock / rebot）")
 
-    service = CaptureService(profile, arm, mapper=mapper, fps=fps, camera=camera)
+    # 电脑摄像头手势 → 夹爪行程（只发布状态；相机画面由 CameraHub 提供）
+    gesture_worker = None
+    if gesture and gesture_camera is not None:
+        from ..gesture import GestureWorker
+        from ..paths import REPO_DIR
+
+        gesture_worker = GestureWorker(
+            lambda: camera.frame(gesture_camera),
+            REPO_DIR / "models" / "vision" / "gesture_recognizer.task",
+            camera=gesture_camera,
+        )
+
+    service = CaptureService(profile, arm, mapper=mapper, fps=fps, camera=camera, gesture=gesture_worker)
     service.connect()
     service.start_loop()
+    if gesture_worker is not None:
+        gesture_worker.start()
 
     app = FastAPI(title="rebot-capture", version=__version__)
     app.state.service = service
@@ -157,17 +176,34 @@ def create_app(
         return camera.set_alias(key, body.name)
 
     @app.get("/api/camera/stream")
-    async def camera_stream(request: Request):
+    async def camera_stream(request: Request, index: int | None = None):
         async def gen():
             boundary = b"--frame\r\n"
             while True:
                 if await request.is_disconnected():
                     break
-                jpg = camera.snapshot()
+                jpg = camera.snapshot(index)
                 if jpg:
                     yield boundary + b"Content-Type: image/jpeg\r\nContent-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n"
                 await asyncio.sleep(1.0 / 20.0)
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    # ---------------------------------------------------------------- #
+    # 电脑摄像头手势（夹爪行程）
+    # ---------------------------------------------------------------- #
+    @app.get("/api/gesture")
+    def gesture_status() -> dict:
+        st = service.gesture_state()
+        if st is None:
+            raise HTTPException(status_code=409, detail="手势模块未启用（启动时用 --gesture-camera 指定电脑相机）")
+        return st
+
+    @app.post("/api/gesture")
+    def gesture_set(body: GestureIn) -> dict:
+        st = service.gesture_control(body.on)
+        if st is None:
+            raise HTTPException(status_code=409, detail="手势模块未启用")
+        return st
 
     # ---------------------------------------------------------------- #
     @app.post("/api/device/goto")
@@ -198,6 +234,15 @@ def create_app(
             return service.save_episode()
         except RuntimeError as e:
             raise HTTPException(status_code=409, detail=str(e))
+
+    # ---------------------------------------------------------------- #
+    # 临时调试：笔侧键/鼠标按键事件回传（定位"悬空按键"的实际事件形态）
+    # ---------------------------------------------------------------- #
+    @app.post("/api/debug/client")
+    def debug_client(body: dict) -> dict:
+        logging.getLogger("uvicorn.error").info(
+            "PEN-EVENT %s", json.dumps(body, ensure_ascii=False, default=str))
+        return {"ok": True}
 
     # ---------------------------------------------------------------- #
     # teleop_core 控制（等价上游键盘/屏幕按钮）
@@ -234,6 +279,10 @@ def create_app(
     @app.post("/api/teleop/joint")
     def teleop_joint(body: JointIn) -> dict:
         return _core_guard(service.teleop_joint, body.index, body.hold)
+
+    @app.post("/api/teleop/motor")
+    def teleop_motor(body: MotorIn) -> dict:
+        return _core_guard(service.teleop_motor, body.index)
 
     @app.post("/api/teleop/align")
     def teleop_align() -> dict:

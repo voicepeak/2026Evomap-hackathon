@@ -73,6 +73,9 @@ def main(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--arm-repo", default=None, help="reBotArm_control_py 仓库路径（默认自动探测/环境变量 REBOT_ARM_REPO）")
     p_serve.add_argument("--limit-margin", type=float, default=1.5, help="关节软限位余量（度）")
     p_serve.add_argument("--allow-nonzero-start", action="store_true", help="允许非零位启动使能（默认拒绝）")
+    p_serve.add_argument("--gesture-camera", type=int, default=0,
+                         help="电脑摄像头索引（手势→夹爪行程；默认 0）")
+    p_serve.add_argument("--no-gesture", action="store_true", help="关闭手势夹爪")
 
     p_self = sub.add_parser("selftest", help="无硬件自检：遥操→录制→质检→打包")
     p_self.add_argument("--quiet", action="store_true")
@@ -96,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
             arm_repo=args.arm_repo,
             limit_margin_deg=args.limit_margin,
             allow_nonzero_start=args.allow_nonzero_start,
+            gesture_camera=args.gesture_camera,
+            gesture=not args.no_gesture,
         )
         import uvicorn
 

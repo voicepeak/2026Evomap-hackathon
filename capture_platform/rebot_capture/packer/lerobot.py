@@ -39,8 +39,16 @@ def build_dataset(
         raise ValueError("数据集至少需要一个 episode")
 
     root_path = Path(root) if root else datasets_dir()
-    ds_dir = root_path / name
-    (ds_dir / "meta").mkdir(parents=True, exist_ok=True)
+    root_path = root_path.resolve()
+    ds_dir = (root_path / name).resolve()
+    if ds_dir == root_path or root_path not in ds_dir.parents:
+        raise RuntimeError("数据集名称必须指向 datasets 目录内的子目录")
+    # 独占创建，避免同名打包覆盖旧文件或混入旧 episode。
+    try:
+        ds_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise RuntimeError(f"数据集已存在，请使用新名称：{name}") from exc
+    (ds_dir / "meta").mkdir()
     (ds_dir / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
 
     fps = fps or profile.fps
