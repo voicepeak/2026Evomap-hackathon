@@ -27,6 +27,10 @@ rebot_workspace_20260923/
 │   ├── urdf/ models/          ← RS 版 URDF 与网格
 │   └── logs/                  ← 之前的运行日志
 ├── tablet_teleop/             ← 早期数位板遥操实验（WebSocket 桥 + 网页）
+├── site/                      ← 项目站点（GitHub Pages 用，零依赖静态页）
+│   ├── index.html / style.css / app.js
+│   ├── assets/                ← 截图、腕部相机动图、favicon
+│   └── publish.command        ← 发布到 gh-pages 分支（也可走 GitHub Actions）
 └── docs/                      ← 设计文档
     ├── 具身智能遥操数据平台_整体方案_v1.0.md
     ├── 采集平台方案.md
