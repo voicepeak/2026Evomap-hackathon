@@ -43,7 +43,9 @@
       <p class="lede">
         一块数位板控制 6 自由度机械臂 —— 落笔跟手、抬笔悬停；
         采集盒自动录制、质检、打包成可训练数据集。
-        <strong>不需要主臂，不需要手工标定；采集端不依赖 ROS —— 一台 Mac 就能采真机数据。</strong>
+        <strong>不需要主臂，不需要手工标定。</strong>
+        机械臂与相机跑在采集盒（Ubuntu）上，你在 Mac / 浏览器里操控 ——
+        <strong>用户端不用装 ROS，也不用碰 Ubuntu。</strong>
       </p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#pipeline">▸ 看它怎么跑</a>
@@ -100,8 +102,8 @@
       <span class="card-num">02</span>
       <h3>环境割裂</h3>
       <p>ROS2 / Isaac Sim / LeRobot 默认都在 Ubuntu：装驱动、编译 workspace，光把环境跑通就耗掉一天。</p>
-      <p class="card-foot">→ 采集端不依赖 ROS：本地优先的 Python 服务，macOS 上直接跑真机采集；
-        上量时交付 Ubuntu RT Edge 盒 + Docker 镜像</p>
+      <p class="card-foot">→ <b>把环境收进采集盒</b>：机械臂 + 相机跑在 Ubuntu 盒子上（Edge 镜像 + Docker），
+        用户侧只要一个客户端或网页 —— Mac / Windows 都不用装 ROS，也不用碰 Ubuntu</p>
     </article>
     <article class="card tilt reveal" data-spot>
       <span class="card-num">03</span>
@@ -183,6 +185,39 @@
     <p class="kicker">03 / 架构</p>
     <h2>滚动穿过四层</h2>
     <p class="section-sub">输入 → 采集 → 平台 → 商业。每一层都在仓库里有对应代码。</p>
+  </div>
+
+  <!-- 部署形态：回答"谁需要 Ubuntu" -->
+  <div class="deploy reveal">
+    <div class="dep-box">
+      <header><span>操作端</span><i>你坐的地方</i></header>
+      <p class="dep-role">Mac / Windows / 浏览器</p>
+      <ul>
+        <li>桌面 GUI 或网页（同一套 REST + WS）</li>
+        <li>数位板：绝对坐标 + 落笔离合</li>
+        <li class="ok">不装 ROS、不碰 Ubuntu、不编译 workspace</li>
+      </ul>
+    </div>
+    <div class="dep-link"><b>WS / HTTP</b><span>本机或局域网</span></div>
+    <div class="dep-box">
+      <header><span>采集盒</span><i>设备侧</i></header>
+      <p class="dep-role">Ubuntu RT + Docker 镜像</p>
+      <ul>
+        <li>100Hz 控制环 · 录制 · 质检 · 打包 · 回放</li>
+        <li>安全盒 / 软限位 / 力矩保护 / 归零</li>
+        <li class="ok">驱动与依赖都收在盒子里，用户永远不用碰</li>
+      </ul>
+    </div>
+    <div class="dep-link"><b>CAN 1 Mbps</b><span>USB 适配器</span></div>
+    <div class="dep-box">
+      <header><span>机械臂</span><i>被控对象</i></header>
+      <p class="dep-role">B601-RS · 6 关节 + 夹爪</p>
+      <ul>
+        <li>RS06×3 / RS00×4，48V，754mm 臂展</li>
+        <li>腕部相机 640×480 30fps 随 episode 入库</li>
+        <li class="ok">不需要主臂（无需示教臂）</li>
+      </ul>
+    </div>
   </div>
 
   <div class="fly" id="fly">
