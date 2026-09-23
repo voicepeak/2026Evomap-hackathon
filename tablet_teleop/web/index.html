@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>数位板采集 · M0 · tablet_teleop</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{
+    --bg:#0c0d11; --panel:#14161c; --line:#252a34; --fg:#e6e8ee; --dim:#7c8496;
+    --accent:#5ee7ff; --accent2:#ffb85e; --ok:#4ade80; --bad:#f87171;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font:13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC",system-ui,sans-serif}
+  .app{display:grid;grid-template-columns:minmax(420px,1.15fr) minmax(360px,1fr);
+    gap:14px;padding:14px;height:100%}
+  .col{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .card h3{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--dim)}
+  canvas{display:block;width:100%;border-radius:6px;background:#0a0b0e}
+  #pad{touch-action:none;user-select:none;-webkit-user-select:none;cursor:crosshair;
+    border:1px solid var(--line)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;
+    background:#1c2029;border:1px solid var(--line);font-size:11px;color:var(--dim)}
+  .badge b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+  .dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.bad{background:var(--bad)}
+  .big{font:600 40px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-variant-numeric:tabular-nums;color:var(--accent)}
+  .big small{font-size:14px;color:var(--dim);font-weight:400;margin-left:4px}
+  .bar{height:10px;background:#0a0b0e;border:1px solid var(--line);border-radius:5px;
+    overflow:hidden;margin-top:8px}
+  .bar>i{display:block;height:100%;background:linear-gradient(90deg,#2b6f80,var(--accent));
+    width:0%;transition:width .04s linear}
+  .bar.f>i{background:linear-gradient(90deg,#7a5024,var(--accent2))}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12px}
+  .kv span:nth-child(odd){color:var(--dim)}
+  .kv span:nth-child(even){font-variant-numeric:tabular-nums;text-align:right}
+  label{display:flex;justify-content:space-between;align-items:center;gap:8px;
+    font-size:12px;color:var(--dim);margin:6px 0}
+  input[type=range]{width:150px;accent-color:var(--accent)}
+  input[type=number]{width:70px;background:#0a0b0e;border:1px solid var(--line);
+    color:var(--fg);border-radius:5px;padding:2px 6px;font-size:12px;text-align:right}
+  button{background:#1c2029;border:1px solid var(--line);color:var(--fg);
+    border-radius:6px;padding:5px 11px;font-size:12px;cursor:pointer}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button.on{border-color:var(--ok);color:var(--ok)}
+  table{width:100%;border-collapse:collapse;font:11px/1.4 ui-monospace,Menlo,monospace;
+    font-variant-numeric:tabular-nums}
+  th,td{text-align:right;padding:2px 4px;border-bottom:1px solid #1b1f27;color:var(--fg)}
+  th{color:var(--dim);font-weight:500}
+  td:first-child,th:first-child{text-align:left}
+  .hint{color:var(--dim);font-size:12px;text-align:center;padding:6px}
+  .warn{color:var(--accent2)}
+  .err{color:var(--bad)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── 左：板面 ───────────────────────────────────────────── -->
+  <div class="col">
+    <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:0">
+      <h3>数位板有效区 <span id="padSize" style="color:var(--dim)"></span></h3>
+      <canvas id="pad"></canvas>
+      <div class="hint">在板子上用笔划一下 · 抬笔＝结束接触（对应机械臂抬起）</div>
+    </div>
+  </div>
+
+  <!-- ── 右：面板 ───────────────────────────────────────────── -->
+  <div class="col">
+
+    <div class="card">
+      <div class="row">
+        <span class="badge"><i class="dot" id="dotDevice"></i><span id="device">未检测到</span></span>
+        <span class="badge"><i class="dot" id="dotConn"></i><span id="conn">离线</span></span>
+        <span class="badge">采样率 <b id="rate">–</b> Hz</span>
+        <span class="badge">合并 <b id="coalesce">–</b>×</span>
+        <span class="badge">样本 <b id="count">0</b></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>法向力指令（笔压 → 力）</h3>
+      <div class="row" style="align-items:baseline">
+        <div class="big" id="fdes">0.00<small>N</small></div>
+        <div style="color:var(--dim);font-size:12px">
+          F = F<sub>min</sub> + 笔压 × (F<sub>max</sub> − F<sub>min</sub>)
+        </div>
+      </div>
+      <div class="bar"><i id="barP"></i></div>
+      <div style="color:var(--dim);font-size:11px;margin-top:4px">笔压 <b id="pv">0.000</b></div>
+      <div class="bar f"><i id="barF"></i></div>
+    </div>
+
+    <div class="card">
+      <h3>力指令波形（5 秒窗）</h3>
+      <canvas id="wave" height="120"></canvas>
+    </div>
+
+    <div class="card">
+      <h3>笔姿态 / 原始通道</h3>
+      <div style="display:grid;grid-template-columns:110px 1fr;gap:10px">
+        <canvas id="tilt" height="110"></canvas>
+        <div class="kv">
+          <span>x, y (板面)</span><span id="kXY">–</span>
+          <span>pressure</span><span id="kP">–</span>
+          <span>tiltX / tiltY</span><span id="kTilt">–</span>
+          <span>altitude</span><span id="kAlt">–</span>
+          <span>azimuth</span><span id="kAz">–</span>
+          <span>twist</span><span id="kTw">–</span>
+          <span>contact w×h</span><span id="kWH">–</span>
+          <span>pointerType</span><span id="kType">–</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>工作空间预览（俯视）</h3>
+      <canvas id="work" height="200"></canvas>
+      <div style="color:var(--dim);font-size:11px;margin-top:6px" id="workNote"></div>
+    </div>
+
+    <div class="card">
+      <h3>映射参数</h3>
+      <label>板面尺寸 (mm)
+        <span><input type="number" id="padW" value="229" step="1"> ×
+              <input type="number" id="padH" value="152" step="1"></span>
+      </label>
+      <label>板面 → 工作台 增益
+        <span><input type="range" id="gain" min="0.5" max="4" step="0.1" value="1">
+              <b id="gainV">1.0×</b></span>
+      </label>
+      <label>工作台距基座 (mm)
+        <span><input type="range" id="dist" min="200" max="600" step="10" value="400">
+              <b id="distV">400</b></span>
+      </label>
+      <label>F<sub>min</sub> (N) <input type="number" id="fmin" value="0" step="0.5"></label>
+      <label>F<sub>max</sub> (N) <input type="number" id="fmax" value="12" step="0.5"></label>
+      <label>可达半径 (70% 臂展, mm) <input type="number" id="reach" value="528" step="1"></label>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div class="row">
+          <button id="btnRec">● 开始记录</button>
+          <button id="btnCsv">导出 CSV</button>
+          <button id="btnClr">清空画布</button>
+        </div>
+        <button id="btnConn">连接 bridge</button>
+      </div>
+      <div style="color:var(--dim);font-size:11px;margin-top:8px" id="recNote">
+        记录会缓存全部样本（含力指令），导出后可直接喂给后面的数据管线。
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>最近样本</h3>
+      <table>
+        <thead><tr><th>t (ms)</th><th>x</th><th>y</th><th>p</th>
+          <th>tx</th><th>ty</th><th>az</th><th>touch</th></tr></thead>
+        <tbody id="rawBody"></tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ══════════════════════════════════════════════════════════════════
+   配置
+   ══════════════════════════════════════════════════════════════════ */
+const cfg = {
+  padW: 229, padH: 152,     // mm —— 数位板有效区，按你的型号改
+  gain: 1.0,                // 板面 → 工作台 缩放
+  dist: 400,                // 工作台中心距机械臂基座 (mm)
+  fMin: 0, fMax: 12,        // N
+  reach: 528,               // mm —— 70% × 754mm 臂展，超过会让 J2 堵转
+};
+
+/* ══════════════════════════════════════════════════════════════════
+   DOM
+   ══════════════════════════════════════════════════════════════════ */
+const $ = (id) => document.getElementById(id);
+const cvPad  = $('pad'),  ctxPad  = cvPad.getContext('2d');
+const cvWave = $('wave'), ctxWave = cvWave.getContext('2d');
+const cvTilt = $('tilt'), ctxTilt = cvTilt.getContext('2d');
+const cvWork = $('work'), ctxWork = cvWork.getContext('2d');
+
+/* ══════════════════════════════════════════════════════════════════
+   状态
+   ══════════════════════════════════════════════════════════════════ */
+const S = {
+  samples: [],          // 速率统计用的时间戳
+  wave: [],             // {t, p, f} 波形缓冲
+  trail: [],            // 常驻轨迹（用于画布），上限 TRAIL_MAX
+  last: null,           // 最新样本
+  count: 0,
+  coalesceAvg: 0,
+  recording: false,
+  recorded: [],         // 记录模式下的完整样本
+  ws: null,
+  deviceSeen: false,
+};
+
+const WAVE_WINDOW = 5000;   // ms
+const TRAIL_MAX  = 3000;    // 画布上保留的最近样本数
+
+/* ══════════════════════════════════════════════════════════════════
+   HiDPI 画布尺寸管理
+   ══════════════════════════════════════════════════════════════════ */
+function fit(cv, h) {
+  const r = cv.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const H = h ?? r.height;
+  cv.width  = Math.max(1, Math.round(r.width * dpr));
+  cv.height = Math.max(1, Math.round(H * dpr));
+  cv.style.height = H + 'px';
+  const c = cv.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { w: r.width, h: H };
+}
+
+let padBox = { w: 0, h: 0 };
+let workBox = { w: 0, h: 0 };
+
+function relayout() {
+  // 板面画布保持数位板真实比例
+  const holder = cvPad.parentElement.getBoundingClientRect();
+  const avail = holder.width - 24;
+  const h = Math.max(180, Math.min(avail * cfg.padH / cfg.padW, window.innerHeight * 0.62));
+  const w = h * cfg.padW / cfg.padH;
+  cvPad.style.width = w + 'px';
+  cvPad.style.margin = '0 auto';
+  padBox = fit(cvPad, h);
+
+  workBox = fit(cvWork, 200);
+  fit(cvWave, 120);
+  fit(cvTilt, 110);
+
+  $('padSize').textContent = `${cfg.padW} × ${cfg.padH} mm`;
+  $('workNote').textContent = '';
+  drawPad(); drawWork(); drawWave(); drawTilt();
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   坐标：板面 mm → 画布 px
+   ══════════════════════════════════════════════════════════════════ */
+const pxPerMm = () => Math.min(padBox.w / cfg.padW, padBox.h / cfg.padH);
+const padOff  = () => ({
+  x: (padBox.w - cfg.padW * pxPerMm()) / 2,
+  y: (padBox.h - cfg.padH * pxPerMm()) / 2,
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   采样
+   ══════════════════════════════════════════════════════════════════ */
+function forceFromPressure(p, out) {
+  out = out || {};
+  out.F = cfg.fMin + p * (cfg.fMax - cfg.fMin);
+  return out.F;
+}
+
+function handleSample(ev, coalescedCount) {
+  const type = ev.pointerType || 'unknown';
+  if (type === 'pen') S.deviceSeen = true;
+
+  // 位置：clientX/Y 换算到画布内的 mm
+  const r = cvPad.getBoundingClientRect();
+  const o = padOff(), k = pxPerMm();
+  const xmm = (ev.clientX - r.left - o.x) / k;
+  const ymm = (ev.clientY - r.top  - o.y) / k;
+
+  const p = (typeof ev.pressure === 'number') ? ev.pressure : 0;
+  const touching = (ev.buttons & 1) === 1 || p > 0;
+
+  const s = {
+    t: performance.now(),
+    ts: ev.timeStamp,
+    x: xmm, y: ymm,
+    p: p,
+    tx: ev.tiltX || 0,
+    ty: ev.tiltY || 0,
+    alt: (typeof ev.altitudeAngle === 'number') ? ev.altitudeAngle : null,
+    az:  (typeof ev.azimuthAngle  === 'number') ? ev.azimuthAngle  : null,
+    tw:  ev.twist || 0,
+    w: ev.width || 0,
+    h: ev.height || 0,
+    type: type,
+    touching: touching,
+    F: forceFromPressure(p),
+  };
+
+  S.last = s;
+  S.count++;
+  S.samples.push(s.t);
+  S.wave.push({ t: s.t, p: s.p, f: s.F });
+  S.trail.push(s);
+  if (S.trail.length > TRAIL_MAX) S.trail.splice(0, S.trail.length - TRAIL_MAX);
+  if (S.recording) S.recorded.push(s);
+
+  // 速率窗口
+  while (S.samples.length > 1 && s.t - S.samples[0] > 2000) S.samples.shift();
+  while (S.wave.length && s.t - S.wave[0].t > WAVE_WINDOW) S.wave.shift();
+
+  if (coalescedCount) {
+    S.coalesceAvg = S.coalesceAvg ? S.coalesceAvg * 0.9 + coalescedCount * 0.1
+                                  : coalescedCount;
+  }
+
+  if (S.ws && S.ws.readyState === 1) {
+    try { S.ws.send(JSON.stringify(s)); } catch (_) {}
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   事件绑定 —— 关键：用 getCoalescedEvents() 拿回 200Hz 的完整笔点
+   ══════════════════════════════════════════════════════════════════ */
+function onPointer(ev) {
+  if (ev.pointerType === 'touch') return;   // 触控忽略，避免误触
+  ev.preventDefault();
+
+  let list = null;
+  if (typeof ev.getCoalescedEvents === 'function') list = ev.getCoalescedEvents();
+  const evs = (list && list.length) ? list : [ev];
+
+  for (const e of evs) handleSample(e, evs.length);
+  if (evs[evs.length - 1] !== ev) handleSample(ev, evs.length);
+
+  drawPad();
+  updateHUD();
+}
+
+cvPad.addEventListener('pointerdown', (ev) => {
+  if (ev.pointerType === 'touch') return;
+  cvPad.setPointerCapture(ev.pointerId);
+  S.deviceSeen = S.deviceSeen || ev.pointerType === 'pen';
+  onPointer(ev);
+});
+cvPad.addEventListener('pointermove', (ev) => { if (ev.pointerType !== 'touch') onPointer(ev); });
+cvPad.addEventListener('pointerup',   (ev) => {
+  if (ev.pointerType === 'touch') return;
+  cvPad.releasePointerCapture?.(ev.pointerId);
+  S.last = S.last ? { ...S.last, p: 0, F: cfg.fMin, touching: false, t: performance.now() } : null;
+  S.wave.push({ t: performance.now(), p: 0, f: cfg.fMin });
+  drawPad(); updateHUD();
+});
+cvPad.addEventListener('contextmenu', (e) => e.preventDefault());
+
+/* ══════════════════════════════════════════════════════════════════
+   绘制：板面
+   ══════════════════════════════════════════════════════════════════ */
+function drawPad() {
+  const { w, h } = padBox;
+  ctxPad.clearRect(0, 0, w, h);
+  ctxPad.fillStyle = '#0a0b0e';
+  ctxPad.fillRect(0, 0, w, h);
+
+  const k = pxPerMm(), o = padOff();
+  const W = cfg.padW * k, H = cfg.padH * k;
+
+  // 板面边框
+  ctxPad.strokeStyle = '#2a3140';
+  ctxPad.lineWidth = 1;
+  ctxPad.strokeRect(o.x + .5, o.y + .5, W - 1, H - 1);
+
+  // 网格（每 20mm）
+  ctxPad.strokeStyle = '#161a22';
+  ctxPad.beginPath();
+  for (let x = 20; x < cfg.padW; x += 20) {
+    ctxPad.moveTo(o.x + x * k, o.y); ctxPad.lineTo(o.x + x * k, o.y + H);
+  }
+  for (let y = 20; y < cfg.padH; y += 20) {
+    ctxPad.moveTo(o.x, o.y + y * k); ctxPad.lineTo(o.x + W, o.y + y * k);
+  }
+  ctxPad.stroke();
+
+  // 中心十字
+  ctxPad.strokeStyle = '#1e2530';
+  ctxPad.beginPath();
+  ctxPad.moveTo(o.x + W / 2, o.y + 8); ctxPad.lineTo(o.x + W / 2, o.y + H - 8);
+  ctxPad.moveTo(o.x + 8, o.y + H / 2); ctxPad.lineTo(o.x + W - 8, o.y + H / 2);
+  ctxPad.stroke();
+
+  // 轨迹
+  const trail = S.trail;
+  ctxPad.lineCap = 'round'; ctxPad.lineJoin = 'round';
+  for (let i = 1; i < trail.length; i++) {
+    const a = trail[i - 1], b = trail[i];
+    if (!a.touching || !b.touching) continue;
+    const pw = 1 + b.p * 7;
+    ctxPad.strokeStyle = `rgba(94,231,255,${0.18 + b.p * 0.8})`;
+    ctxPad.lineWidth = pw;
+    ctxPad.beginPath();
+    ctxPad.moveTo(o.x + a.x * k, o.y + a.y * k);
+    ctxPad.lineTo(o.x + b.x * k, o.y + b.y * k);
+    ctxPad.stroke();
+  }
+
+  // 笔尖
+  const s = S.last;
+  if (s && s.x >= -20 && s.y >= -20 && s.x <= cfg.padW + 20 && s.y <= cfg.padH + 20) {
+    const cx = o.x + s.x * k, cy = o.y + s.y * k;
+    ctxPad.beginPath();
+    ctxPad.arc(cx, cy, 3 + s.p * 9, 0, Math.PI * 2);
+    ctxPad.strokeStyle = s.touching ? '#5ee7ff' : '#7c8496';
+    ctxPad.lineWidth = 1.5; ctxPad.stroke();
+    ctxPad.beginPath();
+    ctxPad.arc(cx, cy, 1.5, 0, Math.PI * 2);
+    ctxPad.fillStyle = s.touching ? '#5ee7ff' : '#7c8496';
+    ctxPad.fill();
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   绘制：波形
+   ══════════════════════════════════════════════════════════════════ */
+function drawWave() {
+  const { w, h } = { w: cvWave.getBoundingClientRect().width, h: 120 };
+  ctxWave.clearRect(0, 0, w, h);
+  ctxWave.fillStyle = '#0a0b0e';
+  ctxWave.fillRect(0, 0, w, h);
+
+  ctxWave.strokeStyle = '#161a22';
+  ctxWave.beginPath();
+  for (let i = 1; i < 5; i++) { const y = h * i / 5; ctxWave.moveTo(0, y); ctxWave.lineTo(w, y); }
+  ctxWave.stroke();
+
+  if (S.wave.length < 2) return;
+  const t1 = S.wave[S.wave.length - 1].t;
+  const t0 = t1 - WAVE_WINDOW;
+  const X = (t) => (t - t0) / WAVE_WINDOW * w;
+
+  // 笔压
+  ctxWave.strokeStyle = 'rgba(94,231,255,.85)';
+  ctxWave.lineWidth = 1.5;
+  ctxWave.beginPath();
+  S.wave.forEach((d, i) => {
+    const y = h - d.p * (h - 4) - 2;
+    i ? ctxWave.lineTo(X(d.t), y) : ctxWave.moveTo(X(d.t), y);
+  });
+  ctxWave.stroke();
+
+  // 力指令
+  const span = Math.max(0.001, cfg.fMax - cfg.fMin);
+  ctxWave.strokeStyle = 'rgba(255,184,94,.85)';
+  ctxWave.beginPath();
+  S.wave.forEach((d, i) => {
+    const y = h - ((d.f - cfg.fMin) / span) * (h - 4) - 2;
+    i ? ctxWave.lineTo(X(d.t), y) : ctxWave.moveTo(X(d.t), y);
+  });
+  ctxWave.stroke();
+
+  ctxWave.fillStyle = '#7c8496';
+  ctxWave.font = '10px ui-monospace,Menlo,monospace';
+  ctxWave.fillText('笔压 0–1', 6, 12);
+  ctxWave.fillStyle = '#ffb85e';
+  ctxWave.fillText(`力 ${cfg.fMin}–${cfg.fMax} N`, 6, 24);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   绘制：笔姿态
+   ══════════════════════════════════════════════════════════════════ */
+function drawTilt() {
+  const w = cvTilt.getBoundingClientRect().width, h = 110;
+  ctxTilt.clearRect(0, 0, w, h);
+  ctxTilt.fillStyle = '#0a0b0e';
+  ctxTilt.fillRect(0, 0, w, h);
+
+  const s = S.last;
+  const cx = w / 2, cy = h - 18;
+
+  // 板面（侧视）
+  ctxTilt.strokeStyle = '#2a3140';
+  ctxTilt.lineWidth = 1;
+  ctxTilt.beginPath(); ctxTilt.moveTo(10, cy); ctxTilt.lineTo(w - 10, cy); ctxTilt.stroke();
+
+  // 笔杆：从笔尖出发，与板面夹角 = altitudeAngle
+  let ex = cx, ey = cy - 62;
+  if (s) {
+    let alt, az;
+    if (s.alt !== null && s.az !== null) {
+      alt = s.alt; az = s.az;
+    } else {
+      // 退回 tiltX/tiltY（度）估算
+      const t = Math.min(1, Math.hypot(s.tx, s.ty) / 90);
+      alt = Math.acos(t); az = Math.atan2(s.ty, s.tx);
+    }
+    const L = 62;
+    const lean = Math.cos(az) >= 0 ? 1 : -1;      // 侧视图里只取左右
+    ex = cx + L * Math.cos(alt) * lean;
+    ey = cy - L * Math.sin(alt);
+  }
+  ctxTilt.strokeStyle = (s && s.touching) ? '#5ee7ff' : '#4a5265';
+  ctxTilt.lineWidth = 3; ctxTilt.lineCap = 'round';
+  ctxTilt.beginPath(); ctxTilt.moveTo(cx, cy); ctxTilt.lineTo(ex, ey); ctxTilt.stroke();
+  ctxTilt.beginPath(); ctxTilt.arc(cx, cy, 2.5, 0, Math.PI * 2);
+  ctxTilt.fillStyle = (s && s.touching) ? '#5ee7ff' : '#4a5265'; ctxTilt.fill();
+
+  ctxTilt.fillStyle = '#7c8496'; ctxTilt.font = '10px ui-monospace,Menlo,monospace';
+  ctxTilt.fillText(s?.alt != null ? `alt ${(s.alt * 180 / Math.PI).toFixed(0)}°` : 'alt –', 6, 12);
+  ctxTilt.fillText(s?.az  != null ? `az  ${(s.az  * 180 / Math.PI).toFixed(0)}°` : 'az –', 6, 24);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   绘制：工作空间（俯视）
+   ══════════════════════════════════════════════════════════════════ */
+function drawWork() {
+  const w = workBox.w, h = 200;
+  ctxWork.clearRect(0, 0, w, h);
+  ctxWork.fillStyle = '#0a0b0e';
+  ctxWork.fillRect(0, 0, w, h);
+
+  // 视图：x ∈ [-700, 700] mm，y ∈ [0, 800] mm
+  const XR = 700, YR = 800;
+  const k = Math.min((w - 16) / (2 * XR), (h - 16) / YR);
+  const ox = w / 2, oy = h - 8;
+  const P = (x, y) => [ox + x * k, oy - y * k];
+
+  // 可达圆
+  ctxWork.strokeStyle = '#233045'; ctxWork.lineWidth = 1;
+  ctxWork.beginPath();
+  const [rx, ry] = P(0, 0);
+  ctxWork.arc(rx, ry, cfg.reach * k, 0, Math.PI * 2);
+  ctxWork.stroke();
+  ctxWork.fillStyle = 'rgba(35,48,69,.18)'; ctxWork.fill();
+
+  // 70% 臂展提示
+  ctxWork.fillStyle = '#4a5265'; ctxWork.font = '10px ui-monospace,Menlo,monospace';
+  ctxWork.fillText(`可达半径 ${cfg.reach}mm`, rx + 8, ry - cfg.reach * k + 12);
+
+  // 工作台矩形
+  const ww = cfg.padW * cfg.gain, wh = cfg.padH * cfg.gain;
+  const x0 = -ww / 2, y0 = cfg.dist - wh / 2;
+  const [ax, ay] = P(x0, y0 + wh);
+  const [bx, by] = P(x0 + ww, y0);
+  ctxWork.strokeStyle = '#5ee7ff'; ctxWork.lineWidth = 1.2;
+  ctxWork.strokeRect(ax, ay, bx - ax, by - ay);
+  ctxWork.fillStyle = 'rgba(94,231,255,.05)';
+  ctxWork.fillRect(ax, ay, bx - ax, by - ay);
+
+  // 基座
+  ctxWork.beginPath(); ctxWork.arc(rx, ry, 5, 0, Math.PI * 2);
+  ctxWork.fillStyle = '#ffb85e'; ctxWork.fill();
+  ctxWork.fillStyle = '#7c8496'; ctxWork.font = '10px ui-monospace,Menlo,monospace';
+  ctxWork.fillText('base', rx + 8, ry + 3);
+
+  // 光标
+  const s = S.last;
+  if (s && s.x >= 0 && s.y >= 0 && s.x <= cfg.padW && s.y <= cfg.padH) {
+    // 板面 (x,y) 单位 mm → 工作台
+    const wx = (s.x - cfg.padW / 2) * cfg.gain;
+    const wy = y0 + (cfg.padH - s.y) * cfg.gain;
+    const [px, py] = P(wx, wy);
+    const inside = Math.hypot(wx, wy) <= cfg.reach;
+    ctxWork.beginPath(); ctxWork.arc(px, py, 4, 0, Math.PI * 2);
+    ctxWork.fillStyle = inside ? '#4ade80' : '#f87171';
+    ctxWork.fill();
+
+    // 到基座的距离
+    const d = Math.hypot(wx, wy);
+    $('workNote').innerHTML = inside
+      ? `工作台坐标 <b>(${wx.toFixed(0)}, ${wy.toFixed(0)})</b> mm · 距基座 <b>${d.toFixed(0)}</b> mm · 
+         工作台尺寸 <b>${ww.toFixed(0)} × ${wh.toFixed(0)}</b> mm`
+      : `<span class="err">超出可达半径！距基座 ${d.toFixed(0)} mm &gt; ${cfg.reach} mm
+         （J2 会堵转掉臂）</span>`;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   HUD
+   ══════════════════════════════════════════════════════════════════ */
+const rawRows = [];
+function updateHUD() {
+  const s = S.last;
+  $('count').textContent = S.count;
+
+  // 速率
+  if (S.samples.length > 2) {
+    const dt = (S.samples[S.samples.length - 1] - S.samples[0]) / 1000;
+    const hz = (S.samples.length - 1) / Math.max(dt, 1e-6);
+    $('rate').textContent = hz.toFixed(0);
+  }
+  $('coalesce').textContent = S.coalesceAvg ? S.coalesceAvg.toFixed(1) : '–';
+
+  // 设备 / 连接
+  $('device').textContent = S.deviceSeen ? (s ? s.type : 'pen') : '未检测到笔';
+  $('dotDevice').className = 'dot' + (S.deviceSeen ? ' ok' : '');
+  $('conn').textContent = S.ws && S.ws.readyState === 1 ? 'bridge 已连接' : '离线';
+  $('dotConn').className = 'dot' + (S.ws && S.ws.readyState === 1 ? ' ok' : '');
+
+  if (!s) return;
+
+  $('pv').textContent = s.p.toFixed(3);
+  $('fdes').innerHTML = s.F.toFixed(2) + '<small>N</small>';
+  $('barP').style.width = (s.p * 100).toFixed(1) + '%';
+  const span = Math.max(0.001, cfg.fMax - cfg.fMin);
+  $('barF').style.width = Math.max(0, Math.min(1, (s.F - cfg.fMin) / span)) * 100 + '%';
+
+  $('kXY').textContent   = `${s.x.toFixed(1)}, ${s.y.toFixed(1)} mm`;
+  $('kP').textContent    = s.p.toFixed(4);
+  $('kTilt').textContent = `${s.tx.toFixed(1)}° / ${s.ty.toFixed(1)}°`;
+  $('kAlt').textContent  = s.alt === null ? '–' : s.alt.toFixed(3) + ' rad';
+  $('kAz').textContent   = s.az  === null ? '–' : s.az.toFixed(3) + ' rad';
+  $('kTw').textContent   = `${s.tw.toFixed(0)}°`;
+  $('kWH').textContent   = `${s.w.toFixed(1)} × ${s.h.toFixed(1)}`;
+  $('kType').textContent = s.type;
+
+  // 原始表
+  rawRows.unshift(s);
+  if (rawRows.length > 8) rawRows.pop();
+  $('rawBody').innerHTML = rawRows.map(r => `<tr>
+    <td>${r.t.toFixed(0)}</td><td>${r.x.toFixed(1)}</td><td>${r.y.toFixed(1)}</td>
+    <td>${r.p.toFixed(3)}</td><td>${r.tx.toFixed(0)}</td><td>${r.ty.toFixed(0)}</td>
+    <td>${(r.az ?? 0).toFixed(2)}</td>
+    <td style="color:${r.touching ? '#4ade80' : '#7c8496'}">${r.touching ? '●' : '○'}</td>
+  </tr>`).join('');
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   参数控件
+   ══════════════════════════════════════════════════════════════════ */
+function bindNum(id, key, after) {
+  const el = $(id);
+  el.addEventListener('input', () => { cfg[key] = parseFloat(el.value) || 0; after?.(); });
+}
+bindNum('padW', 'padW', relayout);
+bindNum('padH', 'padH', relayout);
+bindNum('fmin', 'fMin');
+bindNum('fmax', 'fMax');
+bindNum('reach', 'reach', drawWork);
+
+$('gain').addEventListener('input', () => {
+  cfg.gain = parseFloat($('gain').value);
+  $('gainV').textContent = cfg.gain.toFixed(1) + '×';
+  drawWork();
+});
+$('dist').addEventListener('input', () => {
+  cfg.dist = parseFloat($('dist').value);
+  $('distV').textContent = cfg.dist.toFixed(0);
+  drawWork();
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   记录 / 导出
+   ══════════════════════════════════════════════════════════════════ */
+$('btnRec').addEventListener('click', (e) => {
+  S.recording = !S.recording;
+  if (S.recording) S.recorded = [];
+  e.target.classList.toggle('on', S.recording);
+  e.target.textContent = S.recording ? '■ 停止记录' : '● 开始记录';
+  $('recNote').textContent = S.recording
+    ? '记录中……再点一次停止。'
+    : `已缓存 ${S.recorded.length} 个样本，可导出。`;
+});
+
+$('btnCsv').addEventListener('click', () => {
+  const rows = [['t_ms','ts_ms','x_mm','y_mm','pressure','tiltX_deg','tiltY_deg',
+                 'altitude_rad','azimuth_rad','twist_deg','width','height',
+                 'touching','pointer_type','F_des_N']];
+  for (const s of (S.recording ? S.recorded : S.recorded.length ? S.recorded : [])) {
+    rows.push([s.t.toFixed(2), s.ts.toFixed(2), s.x.toFixed(3), s.y.toFixed(3),
+      s.p.toFixed(5), s.tx.toFixed(2), s.ty.toFixed(2),
+      s.alt === null ? '' : s.alt.toFixed(5),
+      s.az  === null ? '' : s.az.toFixed(5),
+      s.tw.toFixed(1), s.w.toFixed(2), s.h.toFixed(2),
+      s.touching ? 1 : 0, s.type, s.F.toFixed(4)]);
+  }
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `tablet_${new Date().toISOString().replace(/[:.]/g,'-')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+$('btnClr').addEventListener('click', () => {
+  S.trail = []; S.recorded = []; S.wave = []; drawPad(); drawWave();
+});
+
+/* ── 在记录时同步清空 —— 方便录一条干净的示范 --------------------- */
+function resetTrail() { S.trail = []; }
+
+/* ══════════════════════════════════════════════════════════════════
+   WebSocket —— 可选。没有 bridge 也能用（离线模式）
+   ══════════════════════════════════════════════════════════════════ */
+$('btnConn').addEventListener('click', () => {
+  if (S.ws && S.ws.readyState <= 1) { S.ws.close(); return; }
+  try {
+    S.ws = new WebSocket('ws://127.0.0.1:8765');
+    S.ws.onopen  = () => { updateHUD(); $('btnConn').textContent = '断开 bridge'; };
+    S.ws.onclose = () => { updateHUD(); $('btnConn').textContent = '连接 bridge'; };
+    S.ws.onerror = () => { updateHUD(); };
+  } catch (_) { }
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   启动
+   ══════════════════════════════════════════════════════════════════ */
+window.addEventListener('resize', relayout);
+relayout();
+setInterval(() => {
+  if (S.recording) drawPad();
+  drawWave();
+  drawTilt();
+  updateHUD();
+}, 100);
+requestAnimationFrame(() => { relayout(); drawWork(); });
+</script>
+</body>
+</html>
