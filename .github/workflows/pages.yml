@@ -1,6 +1,8 @@
-name: Deploy site to GitHub Pages
+name: Publish site to gh-pages
 
-# 推送 site/ 的改动即自动发布；也可在 Actions 页手动触发。
+# 站点部署方式：仓库 Settings → Pages → Source = "Deploy from a branch" → gh-pages / (root)
+# 本 workflow 把 site/ 推到 gh-pages 分支，Pages 随即自动构建 —— 与"分支部署"完全兼容，
+# 不依赖 pages: write / github-pages 环境（那种方式要求 Source = GitHub Actions）。
 on:
   push:
     branches: [main]
@@ -10,30 +12,30 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: gh-pages
   cancel-in-progress: true
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Push site/ to gh-pages
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          git archive HEAD site | tar -x -C "$tmp"
+          cd "$tmp/site"
+          git init -q
+          git add -A
+          git -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -qm "publish site $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git push -f \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+            HEAD:refs/heads/gh-pages
+          echo "已推送 gh-pages；站点：https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
