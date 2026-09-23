@@ -43,7 +43,7 @@
       <p class="lede">
         一块数位板控制 6 自由度机械臂 —— 落笔跟手、抬笔悬停；
         采集盒自动录制、质检、打包成可训练数据集。
-        <strong>不需要主臂，不需要标定，不需要 Ubuntu。</strong>
+        <strong>不需要主臂，不需要手工标定；采集端不依赖 ROS —— 一台 Mac 就能采真机数据。</strong>
       </p>
       <div class="cta-row">
         <a class="btn btn-primary" href="#pipeline">▸ 看它怎么跑</a>
@@ -99,8 +99,9 @@
     <article class="card tilt reveal" data-spot>
       <span class="card-num">02</span>
       <h3>环境割裂</h3>
-      <p>ROS2 / Isaac Sim / LeRobot 默认都在 Ubuntu，macOS 用户被挡在门外。</p>
-      <p class="card-foot">→ 采集端是本地优先的 Python 服务，macOS 直接跑</p>
+      <p>ROS2 / Isaac Sim / LeRobot 默认都在 Ubuntu：装驱动、编译 workspace，光把环境跑通就耗掉一天。</p>
+      <p class="card-foot">→ 采集端不依赖 ROS：本地优先的 Python 服务，macOS 上直接跑真机采集；
+        上量时交付 Ubuntu RT Edge 盒 + Docker 镜像</p>
     </article>
     <article class="card tilt reveal" data-spot>
       <span class="card-num">03</span>
