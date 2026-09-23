@@ -62,6 +62,22 @@ RMAX = 0.48
 SPEED_PRESETS = [("慢", 0.5), ("中", 1.0), ("快", 2.0)]
 PRESET_FILE = Path(__file__).resolve().parent / "config" / "poses.json"
 
+# ── 平台扩展：电机直控（mode="joint"）的笔轴映射 ──────────────────────────────
+# axis="y"：笔上下象限（俯仰类电机）；axis="x"：笔左右象限（回转/偏航类电机）。
+# sign：笔向上（y）/向右（x）为正时，对应的关节正方向；个别方向反了改这里即可。
+JOINT_PEN_MAP: dict[int, tuple[str, float]] = {
+    0: ("x", +1.0),   # J1 肩部水平回转
+    1: ("y", +1.0),   # J2 肩部俯仰
+    2: ("y", +1.0),   # J3 肘部俯仰
+    3: ("y", +1.0),   # J4 腕部俯仰（+ = 抬头）
+    4: ("x", +1.0),   # J5 腕部偏航
+    5: ("x", +1.0),   # J6 腕部自转
+    # 6 = 夹爪：计划由摄像头检测控制，暂不由笔驱动
+}
+JOINT_PEN_RATE = math.radians(60.0)   # 笔满偏时的关节速度（与 Q/A 直控一致）
+MOTOR_NAMES = ("J1 肩部水平", "J2 肩部俯仰", "J3 肘部俯仰",
+               "J4 腕部俯仰", "J5 腕部偏航", "J6 腕部自转")
+
 
 # ── 工具函数（原样） ────────────────────────────────────────────────────────
 def vel_from_px(v_px: float, vmax: float, travel: float = TRAVEL_PX, dead: float = DEAD_PX) -> float:
@@ -233,6 +249,7 @@ class TeleopCore:
         self.grip_msg = ""
         self.grip_min = 0.0
         self.grip_max = 0.0
+        self._grip_ext_target: float | None = None   # 外部（手势）行程目标 0=合 1=开
 
         self._twist_prev = 0.0
         self._was_float = False
@@ -303,9 +320,48 @@ class TeleopCore:
         return self.speed_i
 
     def set_mode(self, mode: str) -> None:
-        if mode not in ("pos", "ori"):
-            raise ValueError("mode 只能是 'pos' 或 'ori'")
+        if mode not in ("pos", "ori", "joint"):
+            raise ValueError("mode 只能是 'pos'、'ori' 或 'joint'")
         self.mode = mode
+        # 与 spatial_teleop.py 的 set_mode()/按键 O 一致：切换模式时把位置保持点
+        # 同步到当前指令位置，并把笔锚点重置到当前笔位。
+        # 否则姿态模式的"末端位置保持"会把机械臂持续拉回切换前的旧参考点
+        # （表现为某个关节一直转，例如 J4 不断上仰）；远处按住笔切换也会立即跳速。
+        if self.q_cmd is not None:
+            self.p_ref = np.asarray(joint_to_pose(self.q_cmd)[0], float).copy()
+        self.anchor = self.pen
+        if mode == "joint":
+            self.msg = self.motor_msg()
+        elif mode == "ori":
+            self.msg = "姿态模式：笔上下=俯仰 左右=摆头"
+        else:
+            self.msg = "位置模式：笔上下=前后 左右=横移"
+
+    def select_motor(self, i: int) -> None:
+        """平台扩展：选中电机并进入直控模式（笔左键循环调用 / 点 J 按钮）。"""
+        self.j_sel = int(np.clip(i, 0, 6))
+        self.set_mode("joint")
+
+    def set_gripper_target(self, frac: float) -> None:
+        """平台扩展：外部（摄像头手势）设定夹爪行程目标，0 = 闭合、1 = 张开。
+
+        与上次相同的请求直接忽略：到限位/有阻力被力矩保护退回后，不会反复顶；
+        等行程下一次变化（换手势）再继续。真正下发仍走 step() 的限速与力矩保护。
+        """
+        if not self.grip_ready or not self.args.gripper:
+            return
+        frac = float(np.clip(frac, 0.0, 1.0))
+        if self._grip_ext_target is not None and abs(frac - self._grip_ext_target) < 1e-6:
+            return
+        self._grip_ext_target = frac
+        g_lo, g_hi = self.grip_lim
+        self.grip_cmd = float(g_lo + frac * (g_hi - g_lo))
+
+    def motor_msg(self) -> str:
+        if self.j_sel >= 6 or self.j_sel not in JOINT_PEN_MAP:
+            return "电机直控：夹爪（计划由摄像头检测，暂不动作）"
+        axis = JOINT_PEN_MAP[self.j_sel][0]
+        return f"电机直控：{MOTOR_NAMES[self.j_sel]}（笔{'上下' if axis == 'y' else '左右'}）"
 
     def set_float(self, on: bool) -> None:
         self.float_mode = bool(on)
@@ -318,6 +374,8 @@ class TeleopCore:
         self.j_sel = int(np.clip(i, 0, 6))
 
     def request_align(self) -> None:
+        # 与上游按键 R 一致：重设笔锚点，避免重新对齐后按旧位移继续推动机械臂。
+        self.anchor = self.pen
         self.align_req = True
 
     def record_preset(self, i: int) -> dict:
@@ -450,8 +508,21 @@ class TeleopCore:
             )
         self._was_float = False
 
+        # ── 0a2. 电机直控（平台扩展）：笔按电机功能象限驱动所选关节 ──
+        j_direct = 0.0
+        if (mode == "joint" and pressed and not freeze
+                and replay is None and self.selftest_cmd is None
+                and int(self.j_sel) in JOINT_PEN_MAP):
+            axis, sign = JOINT_PEN_MAP[int(self.j_sel)]
+            dx = pen[0] - anchor[0]
+            dy = pen[1] - anchor[1]
+            disp = (-dy if axis == "y" else dx) * sign
+            j_direct = vel_from_px(disp, JOINT_PEN_RATE, self.args.pen_range, self.args.dead)
+
         # ── 0b. 关节直控：参考跟随，避免笛卡尔任务拉扯 ──
         j_cmd = 0.0 if freeze else self.j_req
+        if mode == "joint" and abs(j_direct) > 1e-9:
+            j_cmd = j_direct                      # 笔控优先于 Q/A 保持
         j_sel = int(self.j_sel)
         if abs(j_cmd) > 1e-6:
             self.p_ref = p_cur0.copy()
@@ -470,6 +541,10 @@ class TeleopCore:
             twist_cmd = float(self.selftest_cmd.get("twist", 0.0))
             w_cmd = np.array([self.selftest_cmd.get("wx", 0.0), self.selftest_cmd.get("wy", 0.0),
                               self.selftest_cmd.get("wz", 0.0)], float)
+        elif mode == "joint":
+            # 电机直控：笔只驱动所选关节（已在 0a2 算出），不产生笛卡尔运动
+            v_cmd = np.zeros(3)
+            twist_cmd = 0.0
         elif pressed and not freeze and mode == "ori":
             dx = pen[0] - anchor[0]
             dy = pen[1] - anchor[1]
@@ -602,7 +677,10 @@ class TeleopCore:
             self.grip_send = float(np.clip(
                 self.grip_send + float(np.clip(self.grip_cmd - self.grip_send, -step_g, step_g)), g_lo, g_hi))
             grip_send_out = self.grip_send
-            if abs(j_cmd) > 1e-6 and j_sel == 6 and abs(self.grip_tau) > GRIP_TAU_LIMIT:
+            # 力矩保护：只要还在往目标走（目标 ≠ 实测）且力矩超限，就退回实测并停下本次行程
+            # （含手势/外部目标；退回后相同目标不会再顶，直到行程变化）
+            driving_g = abs(self.grip_cmd - self.grip_pos) > math.radians(2.0)
+            if driving_g and abs(self.grip_tau) > GRIP_TAU_LIMIT:
                 self.j_req = 0.0
                 self.grip_cmd = float(self.grip_pos)
                 self.grip_send = float(self.grip_pos)
@@ -619,10 +697,12 @@ class TeleopCore:
                 self.alarm = ("⚠️ 力矩超限自动冻结: " +
                               ", ".join(f"J{i+1}={np.asarray(tau_meas, float)[i]:+.1f}" for i in over))
 
-        if abs(j_cmd) > 1e-6 or self.mode == "ori":
-            self.status = "冻结中（保持悬停）" if freeze else "就绪（笔=空间运动）"
+        if freeze:
+            self.status = "冻结中（保持悬停）"
+        elif mode == "joint":
+            self.status = self.motor_msg()
         else:
-            self.status = "冻结中（保持悬停）" if freeze else "就绪（笔=空间运动）"
+            self.status = "就绪（笔=空间运动）"
 
         return CoreCommand(
             q=q_new,
