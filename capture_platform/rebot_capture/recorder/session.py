@@ -228,7 +228,8 @@ class CaptureService:
             # teleop_core 路径：核心自己算 q/kp/kd/tau 与夹爪
             if self.core_mapper is not None:
                 grip_rad = getattr(self.backend, "grip_rad", lambda: None)()
-                cmd = self.core_mapper.step(pen, state.pos, state.tau, grip_rad)
+                # 实测关节速度给核心的直控速度环用（PID 控速；无反馈时核心自行差分）
+                cmd = self.core_mapper.step(pen, state.pos, state.tau, grip_rad, vel_meas=state.vel)
                 self.backend.send_mit(cmd.q, cmd.kp, cmd.kd, cmd.tau, grip_rad=cmd.grip_send)
                 grip_target = getattr(self.backend, "grip_target", lambda: state.grip)()
                 action = np.concatenate([cmd.q, [float(grip_target)]])

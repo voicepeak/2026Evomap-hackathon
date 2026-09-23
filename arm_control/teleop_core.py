@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
 """reBot 空间遥操控制核心（无 GUI 版）。
 
-**从 `spatial_teleop.py` 的 `control_loop()` 原样抽出**，不改控制律：
-同一套常量、同一套顺序（冻结/对齐/回放/漂浮/直控 → 速度指令 → 安全盒 →
-雅可比阻尼最小二乘 → 零空间 → 限幅积分 → 夹爪 → 力矩保护）。
+**从 `spatial_teleop.py` 的 `control_loop()` 原样抽出**，同一套常量、同一套顺序
+（冻结/对齐/回放/漂浮/直控 → 速度指令 → 安全盒 → 雅可比阻尼最小二乘 → 零空间 →
+限幅积分 → 夹爪 → 力矩保护）。
+
+平台在此基础上补了三处手感（都已参数化在 `CoreArgs`，可关掉回到上游行为）：
+
+1. **速度指令整形**：末端速度/角速度/J6 自转/关节直控速度都先过
+   "一阶低通 + 加速度限幅"再做控制。原来这些指令都是阶跃（落笔、松手、
+   换向、按住 Q/A 的瞬间直接从 0 跳到满速），表现就是"顿一下 / 窜一下"。
+   整形只削瞬间突变，**额定速度不变**（低通 30ms、加速度上限见 CoreArgs）。
+2. **关节直控 PID 速度环**（电机直控 / Q/A）：用实测关节速度闭环，
+   参考速度 ≈ 实速（`vel_meas` 传电机反馈；不传则退化为指令差分）。
+   P/I 补摩擦与负载造成的稳态速度差，D 抑制过冲；输出修正量限幅 + 抗饱和。
+3. **姿态模式速度档**：角速度上限随 慢/中/快 缩放（原来三档完全一样），
+   并把笔的死区/曲线调得更跟手（`DEAD_PX` 3px、`EXPO` 1.2）。
 
 `spatial_teleop.py` 保持不动；本文件供平台 / 无头脚本复用。
 
@@ -11,7 +23,7 @@
 
     core = TeleopCore(model, data, fid, kp, kd)
     core.pen_press(x_px, y_px); core.pen_move(x_px, y_px)
-    cmd = core.step(dt, q_meas, tau_meas)
+    cmd = core.step(dt, q_meas, tau_meas, vel_meas=qd_meas)
     arm.arm.send_mit(cmd.q, vel=np.zeros(6), kp=cmd.kp, kd=cmd.kd, tau=cmd.tau)
     if cmd.grip_send is not None:
         grip.send_mit(np.array([cmd.grip_send]), vel=np.zeros(1),
@@ -31,12 +43,12 @@ import pinocchio as pin
 from reBotArm_control_py.dynamics import compute_generalized_gravity
 from reBotArm_control_py.kinematics import joint_to_pose, pad_q_for_model, pos_rot_to_se3
 
-# ── 常量（与 spatial_teleop.py 一致） ────────────────────────────────────────
+# ── 常量（与 spatial_teleop.py 一致；★ = 平台调过手感） ───────────────────────
 RATE = 200
 PEN_TIMEOUT = 0.4
 TRAVEL_PX = 200.0
-DEAD_PX = 6.0
-EXPO = 1.4
+DEAD_PX = 3.0              # ★ 死区（原 6.0）：小位移也跟手，不再"推半天不动"
+EXPO = 1.2                 # ★ 手感曲线（原 1.4）：更早提速（原来小位移太"肉"）
 VMAX = 0.08
 QD_MAX = 1.0
 TWIST_RATE = math.radians(35.0)
@@ -82,12 +94,39 @@ MOTOR_NAMES = ("J1 肩部水平", "J2 肩部俯仰", "J3 肘部俯仰",
 
 
 # ── 工具函数（原样） ────────────────────────────────────────────────────────
-def vel_from_px(v_px: float, vmax: float, travel: float = TRAVEL_PX, dead: float = DEAD_PX) -> float:
+def vel_from_px(v_px: float, vmax: float, travel: float = TRAVEL_PX, dead: float = DEAD_PX,
+                expo: float = EXPO) -> float:
     a = abs(v_px)
     if a <= dead:
         return 0.0
     f = min((a - dead) / max(travel - dead, 1.0), 1.0)
-    return math.copysign((f ** EXPO) * vmax, v_px)
+    return math.copysign((f ** expo) * vmax, v_px)
+
+
+def shape_step(cur: float, target: float, acc: float, tau: float, dt: float) -> float:
+    """一维速度指令整形：一阶低通 + 加速度限幅（不降额定速度，只削突变）。
+
+    - `tau`：低通时间常数（s），把笔的抖动/离散采样抹平；0 = 关
+    - `acc`：加速度上限（单位/s²），起停、反向都走斜坡；0 = 关
+    """
+    x = target if tau <= 0 else cur + (target - cur) * (dt / (tau + dt))
+    lim = max(float(acc), 0.0) * dt
+    d = x - cur
+    if lim > 0 and abs(d) > lim:
+        d = math.copysign(lim, d)
+    return cur + d
+
+
+def shape_vec(cur: np.ndarray, target: np.ndarray, acc: float, tau: float, dt: float) -> np.ndarray:
+    """三维速度指令整形（逐分量，见 shape_step）。"""
+    cur = np.asarray(cur, float)
+    target = np.asarray(target, float)
+    x = target if tau <= 0 else cur + (target - cur) * (dt / (tau + dt))
+    lim = max(float(acc), 0.0) * dt
+    d = x - cur
+    if lim > 0:
+        d = np.clip(d, -lim, lim)
+    return cur + d
 
 
 def limit_repulse(q: np.ndarray, lo: np.ndarray, hi: np.ndarray,
@@ -184,10 +223,11 @@ class CoreArgs:
     vmax: float = VMAX
     pen_range: float = TRAVEL_PX
     dead: float = DEAD_PX
+    expo: float = EXPO                     # ★ 笔 → 速度手感曲线（越小越跟手）
     damping: float = DAMPING
     ori_weight: float = 0.0
     posture_k: float = 0.2
-    wmax_deg: float = 30.0
+    wmax_deg: float = 40.0                 # ★ 姿态模式满偏角速度（原 30；随速度档缩放）
     j_rate: float = 60.0
     limit_margin: float = 1.5
     limit_soft: float = LIMIT_SOFT     # 限位排斥作用带（rad）
@@ -204,6 +244,21 @@ class CoreArgs:
     grip_hi: float = 328.0
     grip_rate: float = GRIP_RATE
     u_max_clip: float = 0.0   # >0 时对空间速度做整体限幅（上游未用，保留位）
+    # ── 速度指令整形（★ 平台新增）：只削"起停/反向的瞬间跳变"，不降额定速度 ──
+    v_acc: float = 1.2         # 末端加速度上限（m/s²）
+    v_tau: float = 0.03        # 末端速度一阶低通（s）
+    w_acc: float = 10.0        # 角加速度上限（rad/s²）
+    w_tau: float = 0.03        # 角速度一阶低通（s）
+    twist_acc: float = 8.0     # J6 自转角加速度上限（rad/s²）
+    twist_tau: float = 0.03
+    j_acc: float = 14.0        # 关节直控加速度上限（rad/s²）：0→60°/s 约 75ms
+    j_tau: float = 0.02        # 关节直控速度一阶低通（s）
+    # ── 关节直控速度环（PID，★ 平台新增）：让电机真的跑在指令速度上 ──
+    jvel_kp: float = 0.20      # 比例
+    jvel_ki: float = 2.00      # 积分（消除摩擦/负载造成的稳态速度差）
+    jvel_kd: float = 0.02      # 微分（作用在实测速度上，抑制过冲）
+    jvel_tau: float = 0.02     # 测速低通（s）
+    jvel_corr_max: float = 0.25  # 速度环修正量上限（rad/s），防止异常大修正
 
 
 @dataclass
@@ -304,6 +359,79 @@ class TeleopCore:
         self._t0: float | None = None
         self._n = 0
 
+        # ── 速度整形 / 关节速度环状态（★ 平台新增） ──
+        self._v_sm = np.zeros(3)     # 整形后的末端速度（m/s）
+        self._w_sm = np.zeros(3)     # 整形后的角速度（rad/s）
+        self._tw_sm = 0.0            # 整形后的 J6 自转速度（rad/s）
+        self._j_sm = 0.0             # 整形后的关节直控速度（rad/s）
+        self._jvel_i = 0.0           # 速度环积分项
+        self._jvel_d = 0.0           # 速度环微分项（低通后）
+        self._jvel_meas = 0.0        # 低通后的实测速度
+        self._jvel_meas_prev: float | None = None
+        self._jvel_corr = 0.0        # 最近一次速度环修正量（诊断用）
+        self._jvel_ref = 0.0         # 最近一次关节速度参考（诊断用）
+        self._q_meas: np.ndarray | None = None
+        self._q_meas_prev: np.ndarray | None = None
+        self._qd_fb: np.ndarray | None = None   # 电机反馈速度（rad/s）
+
+    # ====================================================================== #
+    # 速度整形 / 关节直控速度环（PID）
+    # ====================================================================== #
+    def _reset_shapers(self) -> None:
+        """命令源切换（模式/电机/回放/冻结）时清空整形与速度环状态。
+
+        否则上一段运动的速度会"漏"到新目标上（例如换电机瞬间被带动）。
+        """
+        self._v_sm[:] = 0.0
+        self._w_sm[:] = 0.0
+        self._tw_sm = 0.0
+        self._j_sm = 0.0
+        self._jvel_reset()
+
+    def _jvel_reset(self) -> None:
+        self._jvel_i = 0.0
+        self._jvel_d = 0.0
+        self._jvel_meas = 0.0
+        self._jvel_meas_prev = None
+        self._jvel_corr = 0.0
+        self._jvel_ref = 0.0
+
+    def _measured_vel(self, i: int, dt: float) -> float:
+        """关节 i 的实测角速度：优先用电机反馈，没有就差分；再做一阶低通。"""
+        if self._qd_fb is not None:
+            raw = float(np.asarray(self._qd_fb, float)[i])
+        elif self._q_meas is not None and self._q_meas_prev is not None:
+            raw = float((self._q_meas[i] - self._q_meas_prev[i]) / max(dt, 1e-4))
+        else:
+            raw = 0.0
+        tau = max(0.0, float(self.args.jvel_tau))
+        a = 1.0 if tau <= 0 else dt / (tau + dt)
+        self._jvel_meas += (raw - self._jvel_meas) * a
+        return self._jvel_meas
+
+    def _joint_vel_pid(self, ref: float, i: int, dt: float) -> float:
+        """关节直控速度环（PID，串级在位置积分外环上）。
+
+        `ref` 已做过整形（限加速 + 低通），这里用实测速度闭环：
+        - P/I 修正摩擦、负载、重力前馈误差造成的速度偏差（速度更准，不是更慢）
+        - D 作用在实测速度上（避免参考阶跃时的微分冲击），并再低通一次
+        - 输出修正量限幅 + 积分抗饱和
+        """
+        a = self.args
+        meas = self._measured_vel(i, dt)
+        err = ref - meas
+        i_lim = float(a.jvel_corr_max) / max(float(a.jvel_ki), 1e-6)
+        self._jvel_i = float(np.clip(self._jvel_i + err * dt, -i_lim, i_lim))
+        d_raw = 0.0 if self._jvel_meas_prev is None else -(meas - self._jvel_meas_prev) / max(dt, 1e-4)
+        tau_d = max(1e-3, float(a.jvel_tau))
+        self._jvel_d += (d_raw - self._jvel_d) * (dt / (tau_d + dt))
+        self._jvel_meas_prev = meas
+        corr = float(a.jvel_kp) * err + float(a.jvel_ki) * self._jvel_i + float(a.jvel_kd) * self._jvel_d
+        corr = float(np.clip(corr, -float(a.jvel_corr_max), float(a.jvel_corr_max)))
+        self._jvel_corr = corr
+        self._jvel_ref = float(ref)
+        return float(ref) + corr
+
     # ====================================================================== #
     # 初始化（使能后调用一次，等价 control_loop 的启动段）
     # ====================================================================== #
@@ -377,6 +505,7 @@ class TeleopCore:
         if self.q_cmd is not None:
             self.p_ref = np.asarray(joint_to_pose(self.q_cmd)[0], float).copy()
         self.anchor = self.pen
+        self._reset_shapers()      # 换模式 = 换指令源：上一段速度不许漏到新模式
         if mode == "joint":
             self.msg = self.motor_msg()
         elif mode == "ori":
@@ -418,7 +547,10 @@ class TeleopCore:
         self.j_req = float(v)
 
     def select_joint(self, i: int) -> None:
-        self.j_sel = int(np.clip(i, 0, 6))
+        i = int(np.clip(i, 0, 6))
+        if i != self.j_sel:
+            self._reset_shapers()   # 换关节：上一段的整形/速度环状态不串到新关节
+        self.j_sel = i
 
     def request_align(self) -> None:
         # 与上游按键 R 一致：重设笔锚点，避免重新对齐后按旧位移继续推动机械臂。
@@ -458,12 +590,21 @@ class TeleopCore:
     # ====================================================================== #
     # 主步进（等价 control_loop 一次迭代）
     # ====================================================================== #
-    def step(self, dt_raw: float, q_meas: np.ndarray, tau_meas: np.ndarray | None = None) -> CoreCommand:
+    def step(self, dt_raw: float, q_meas: np.ndarray, tau_meas: np.ndarray | None = None,
+             vel_meas: np.ndarray | None = None) -> CoreCommand:
+        """一步控制。
+
+        `vel_meas`：关节实测角速度（rad/s，可选）。给了就用电机反馈做直控速度环；
+        没给就退化成"指令差分"，行为与上游一致（测试/无反馈场景）。
+        """
         now = time.perf_counter()
         if self._t0 is None:
             self._t0 = now
         dt = max(1e-4, min(float(dt_raw), 0.05))
         q_meas = np.asarray(q_meas, float)[:6]
+        self._q_meas_prev = None if self._q_meas is None else self._q_meas.copy()
+        self._q_meas = q_meas.copy()
+        self._qd_fb = None if vel_meas is None else np.asarray(vel_meas, float)[:6]
         if self.q_cmd is None:
             self.prime(q_meas)
 
@@ -542,6 +683,7 @@ class TeleopCore:
             self.p_ref = np.asarray(p_fl, float).copy()
             self.rpy_ref = np.asarray(rpy_fl, float).copy()
             self._was_float = True
+            self._reset_shapers()   # 漂浮期间手工推臂，退出后从 0 起速
             return CoreCommand(
                 q=q_fl,
                 kp=np.zeros(6),
@@ -564,14 +706,22 @@ class TeleopCore:
             dx = pen[0] - anchor[0]
             dy = pen[1] - anchor[1]
             disp = (-dy if axis == "y" else dx) * sign
-            j_direct = vel_from_px(disp, JOINT_PEN_RATE, self.args.pen_range, self.args.dead)
+            j_direct = vel_from_px(disp, JOINT_PEN_RATE, self.args.pen_range, self.args.dead,
+                                   self.args.expo)
 
         # ── 0b. 关节直控：参考跟随，避免笛卡尔任务拉扯 ──
         j_cmd = 0.0 if freeze else self.j_req
         if mode == "joint" and abs(j_direct) > 1e-9:
             j_cmd = j_direct                      # 笔控优先于 Q/A 保持
+        # 速度指令整形：起停/换向走斜坡 + 低通（额定速度不变，只去掉"瞬间跳变"）。
+        # 之前是直接从 0 跳到满速（Q/A 按住、笔甩动、松手都是阶跃）→ 冲击感很大。
+        if freeze or replay is not None or self.selftest_cmd is not None:
+            self._j_sm = 0.0
+        else:
+            self._j_sm = shape_step(self._j_sm, j_cmd, self.args.j_acc, self.args.j_tau, dt)
+        j_ref = 0.0 if freeze else float(self._j_sm)
         j_sel = int(self.j_sel)
-        if abs(j_cmd) > 1e-6:
+        if abs(j_ref) > 1e-6:
             self.p_ref = p_cur0.copy()
             self.rpy_ref = rpy_cur0.copy()
             rpy_ref_use = self.rpy_ref
@@ -595,10 +745,11 @@ class TeleopCore:
         elif pressed and not freeze and mode == "ori":
             dx = pen[0] - anchor[0]
             dy = pen[1] - anchor[1]
-            wmax = math.radians(float(self.args.wmax_deg))
-            w_cmd = np.array([vel_from_px(-dy, wmax, self.args.pen_range, self.args.dead) if self.shift else 0.0,
-                              vel_from_px(-dy, wmax, self.args.pen_range, self.args.dead) if not self.shift else 0.0,
-                              vel_from_px(dx, wmax, self.args.pen_range, self.args.dead)])
+            # ★ 角速度上限随速度档缩放（原来慢/中/快完全一样，姿态模式调档没反应）
+            wmax = math.radians(float(self.args.wmax_deg)) * speed
+            w_cmd = np.array([vel_from_px(-dy, wmax, self.args.pen_range, self.args.dead, self.args.expo) if self.shift else 0.0,
+                              vel_from_px(-dy, wmax, self.args.pen_range, self.args.dead, self.args.expo) if not self.shift else 0.0,
+                              vel_from_px(dx, wmax, self.args.pen_range, self.args.dead, self.args.expo)])
             v_cmd = np.zeros(3)
             twist_cmd = 0.0
         elif pressed and not freeze:
@@ -606,16 +757,29 @@ class TeleopCore:
             dy = pen[1] - anchor[1]
             if self.shift:
                 v_cmd = np.array([0.0,
-                                  vel_from_px(dx, vmax, self.args.pen_range, self.args.dead),
-                                  vel_from_px(-dy, vmax, self.args.pen_range, self.args.dead)])
+                                  vel_from_px(dx, vmax, self.args.pen_range, self.args.dead, self.args.expo),
+                                  vel_from_px(-dy, vmax, self.args.pen_range, self.args.dead, self.args.expo)])
             else:
-                v_cmd = np.array([vel_from_px(-dy, vmax, self.args.pen_range, self.args.dead),
-                                  vel_from_px(dx, vmax, self.args.pen_range, self.args.dead),
+                v_cmd = np.array([vel_from_px(-dy, vmax, self.args.pen_range, self.args.dead, self.args.expo),
+                                  vel_from_px(dx, vmax, self.args.pen_range, self.args.dead, self.args.expo),
                                   0.0])
             twist_cmd = twist
         else:
             v_cmd = np.zeros(3)
             twist_cmd = 0.0
+
+        # ── 1b. 速度指令整形（★ 平台新增）：限加速 + 低通 ──
+        # 位置/姿态模式原来也是"阶跃速度"：落笔/松手/反向的瞬间都在硬切换，
+        # 手感是"一顿一顿"；这里把指令磨成连续斜坡（额定速度不变，只是能到的速度更快）。
+        if freeze or replay is not None or self.selftest_cmd is not None:
+            self._reset_shapers()
+        else:
+            self._v_sm = shape_vec(self._v_sm, v_cmd, self.args.v_acc, self.args.v_tau, dt)
+            self._w_sm = shape_vec(self._w_sm, w_cmd, self.args.w_acc, self.args.w_tau, dt)
+            self._tw_sm = shape_step(self._tw_sm, twist_cmd, self.args.twist_acc, self.args.twist_tau, dt)
+            v_cmd = self._v_sm.copy()
+            w_cmd = self._w_sm.copy()
+            twist_cmd = float(self._tw_sm)
         if freeze:
             v_cmd = np.zeros(3)
             w_cmd = np.zeros(3)
@@ -692,8 +856,14 @@ class TeleopCore:
         self.stale_ori = bool(np.linalg.norm(
             [wrap_pi(self.rpy_ref[i] - joint_to_pose(self.q_cmd)[1][i]) for i in range(3)]) > 0.5)
 
-        if abs(j_cmd) > 1e-6 and j_sel < 6:
-            qd[j_sel] += j_cmd
+        # ── 3b. 关节直控：PID 速度环 ──
+        # 原来是"指令速度直接当关节速度"（qd += j_cmd）：电机没跟上就永远差着，
+        # 有摩擦/负载时实际速度达不到指令，且任何抖动都原样传到电机。
+        # 现在用实测速度闭环（参考已整形）：P/I 补掉稳态速度差，D 抑制过冲。
+        if abs(j_ref) > 1e-6 and j_sel < 6:
+            qd[j_sel] += self._joint_vel_pid(j_ref, j_sel, dt)
+        else:
+            self._jvel_reset()
 
         # ── 4. 关节速度限幅 + 积分 + 软限位硬夹 ──
         qd = np.clip(qd, -QD_MAX, QD_MAX)
@@ -708,9 +878,9 @@ class TeleopCore:
         grip_send_out: float | None = None
         if self.grip_ready and self.args.gripper:
             g_lo, g_hi = self.grip_lim
-            if abs(j_cmd) > 1e-6 and j_sel == 6:
+            if abs(j_ref) > 1e-6 and j_sel == 6:
                 self.grip_cmd = float(np.clip(
-                    self.grip_cmd + math.copysign(float(self.args.grip_rate) * dt, j_cmd), g_lo, g_hi))
+                    self.grip_cmd + math.copysign(float(self.args.grip_rate) * dt, j_ref), g_lo, g_hi))
             step_g = float(self.args.grip_rate) * 1.5 * dt
             self.grip_send = float(np.clip(
                 self.grip_send + float(np.clip(self.grip_cmd - self.grip_send, -step_g, step_g)), g_lo, g_hi))

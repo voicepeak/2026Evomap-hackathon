@@ -115,6 +115,12 @@ cd capture_platform
   - **长按**（按住约 0.5s）= 切换 位置/姿态
 - **电机直控**（选中电机后）：按该电机的功能象限驱动——俯仰类（J2/J3/J4）用笔上下，回转类（J1/J5/J6）用笔左右；
   选中**夹爪**时为笔上划 = 张开、下划 = 闭合（手动兜底）
+- **速度手感**（2026-09 调）：所有速度指令（位置/姿态/电机直控/Q·A）先过
+  "限加速 + 30ms 低通"再下发，起停与换向不再一帧内 0↔满速（原来单电机直控会明显"窜一下"）；
+  电机直控另有 **PID 速度环**（用电机反馈的实测角速度闭环），摩擦/负载造成的速度差会被补回来，
+  所以是"更顺"而不是"更慢"——满偏速度不变（关节 60°/s、末端 8cm/s×速度档，姿态 40°/s×速度档）。
+  参数都在 `arm_control/teleop_core.py` 的 `CoreArgs`（`v_acc/v_tau/w_acc/w_tau/j_acc/j_tau`、
+  `jvel_kp/ki/kd`、`dead/expo/wmax_deg`），调完不用改别的代码
 - **手势夹爪**（电脑摄像头）：**张开手 = 夹爪张开行程**，**握拳 = 夹爪闭合行程**，不区分左右手；
   同一手势保持不会反复触发，手离开后再做同一手势会重新生效（手动调整过夹爪后不会被抢回）；
   电机被保护性失能时平台会自动重新使能（自愈）。默认相机 `--gesture-camera 2`，界面左上按钮可临时开关。
@@ -181,7 +187,7 @@ curl -s http://127.0.0.1:8787/api/library | python3 -m json.tool | head -30
 4. **失能**只在 park 位附近允许（`disable_arm.py`）
 5. **异常退出**：温和归零 + 力矩 >25 N·m 立即停止、原地保持
 6. **回放/走位**：力矩超限自动中止并保持
-7. **遥操**：抬笔即停（0.4s 输入超时）、安全盒 BX/BY/BZ+RMAX 0.48（**软边界**：接近边界按剩余空间成比例减速，可以慢慢贴边但不会越界，无"推不动"死区）、关节软限位 1.5°（限位排斥已减弱为 0.12 rad/s / 3° 作用带，避免限位反弹）、QD ≤1.0 rad/s
+7. **遥操**：抬笔即停（0.4s 输入超时；速度指令带 30ms 低通 + 加速度限幅，起停/换向是连续斜坡而不是瞬间跳变，松手约 0.1s 内停稳）、安全盒 BX/BY/BZ+RMAX 0.48（**软边界**：接近边界按剩余空间成比例减速，可以慢慢贴边但不会越界，无"推不动"死区）、关节软限位 1.5°（限位排斥已减弱为 0.12 rad/s / 3° 作用带，避免限位反弹）、QD ≤1.0 rad/s
 
 ---
 
@@ -207,7 +213,7 @@ curl -s http://127.0.0.1:8787/api/library | python3 -m json.tool | head -30
 |---|---|---|
 | 采集平台 | `capture_platform/rebot_capture/server/app.py` | REST + WS + Web UI |
 | **桌面 GUI** | `capture_platform/rebot_capture/gui/` | PySide6 原生界面（服务客户端） |
-| 控制核心（上游逻辑） | `arm_control/teleop_core.py` | 速度档/冻结/姿态模式/漂浮/直控/预设 |
+| 控制核心（上游逻辑） | `arm_control/teleop_core.py` | 速度档/冻结/姿态模式/漂浮/直控/预设 + 速度整形与直控 PID 速度环 |
 | 平台适配器 | `capture_platform/rebot_capture/teleop/rebot_core.py` | 把 teleop_core 接进平台（笔坐标 960×620 虚拟窗口） |
 | 真机后端 | `capture_platform/rebot_capture/device/real_arm.py` | 连接/读状态/MIT 下发/归零/失能门 |
 | 质量门 | `capture_platform/rebot_capture/quality/` | 硬门 + A/B/C/F 评分 |

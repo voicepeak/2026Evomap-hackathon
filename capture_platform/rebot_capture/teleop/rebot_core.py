@@ -53,7 +53,7 @@ class RebotCoreMapper:
     # 主步进：输入笔样本 → CoreCommand
     # ------------------------------------------------------------------ #
     def step(self, pen: PenSample | None, q_meas: np.ndarray, tau_meas: np.ndarray | None = None,
-             grip_rad: float | None = None) -> Any:
+             grip_rad: float | None = None, vel_meas: np.ndarray | None = None) -> Any:
         now = time.monotonic()
         dt = now - self._last_t
         self._last_t = now
@@ -69,7 +69,7 @@ class RebotCoreMapper:
         else:
             self.core.set_pen(0.0, 0.0, False, shift=False, twist=twist)
 
-        cmd = self.core.step(dt, np.asarray(q_meas, dtype=float)[:6], tau_meas)
+        cmd = self.core.step(dt, np.asarray(q_meas, dtype=float)[:6], tau_meas, vel_meas=vel_meas)
         self.core.update_feedback(np.asarray(q_meas, dtype=float)[:6], tau_meas, grip_pos=grip_rad)
         self._last_cmd = cmd
         return cmd
@@ -154,4 +154,8 @@ class RebotCoreMapper:
             "q_cmd_deg": [round(float(np.degrees(x)), 1) for x in (c.q_cmd if c.q_cmd is not None else np.zeros(6))],
             "v_cmd": [round(float(x), 4) for x in c.v_cmd],
             "qd_cmd": [round(float(x), 3) for x in c.qd_cmd],
+            # 关节直控速度环（调参用）：参考 / 实测 / 修正量（rad/s）
+            "joint_vel_ref": round(float(c._jvel_ref), 3),
+            "joint_vel_meas": round(float(c._jvel_meas), 3),
+            "joint_vel_corr": round(float(c._jvel_corr), 3),
         }
