@@ -1,9 +1,9 @@
-# rebot-capture · RDP 采集端（框架）
+# rebot-capture · 采集端
 
 > 本地优先、离线可用的采集端：**设备状态 → 遥操 → 录制 → 质检 → 打包 LeRobot 数据集**。
 > 设计文档见 `../采集平台方案.md`。
 
-当前是 **v0.1 框架**：全链路已打通（无硬件用 Mock 后端即可跑通自检），真机后端留好接口待接入。
+当前是 **v0.1**：全链路已打通（**遥操 → 录制 → 质检 → 打包 → 回放**）。真机后端已接入并在 reBot Arm B601-RS 上实测采集（已产出 4 个数据集、6 条 episode）；无硬件时用 Mock 后端即可跑通自检。
 
 ---
 
@@ -38,8 +38,8 @@ python3 -m venv .venv                       # 用系统/conda 的 python3.10+
 rebot_capture/
 ├── configs/rebot_b601_rs.json      # 设备档案（电机ID/型号/限位/增益，来自实测）
 ├── rebot_capture/
-│   ├── device/                     # 设备层：档案 / 后端协议 / Mock / 真机骨架
-│   ├── teleop/                     # 输入层：笔样本 / 映射（Mock v0；IK 待接入）
+│   ├── device/                     # 设备层：档案 / 后端协议 / Mock 后端 / 真机后端（B601-RS 实测）
+│   ├── teleop/                     # 输入层：笔样本 / 映射（真机走 teleop_core，Mock 走 MockPenMapper）
 │   ├── recorder/                   # 录制层：episode / 会话 / 落盘 + CaptureService
 │   ├── quality/                    # 质量层：硬门规则 + 评分卡（A/B/C/F）
 │   ├── packer/                     # 打包层：LeRobot 风格数据集 + 校验
@@ -119,7 +119,7 @@ rebot_capture/
 |---|---|
 | §4.3 采集端 App | `server/` + `web/` |
 | §5.1 一键配置 | `device/profile.py` → `to_auto_config()` |
-| §5.2 安全状态机 | `device/real_arm.py`（接口已留） |
+| §5.2 安全状态机 | `device/real_arm.py`（启动安全门 / MIT+重力前馈 / 力矩保护 / 归零与失能门，均已实现） |
 | §6 数据标准 | `packer/lerobot.py` + `meta/rebot_meta.json` |
 | §7 质量门/评分卡 | `quality/rules.py` + `quality/scoring.py` |
 | §9 API | `server/app.py`（见 docs/API.md） |

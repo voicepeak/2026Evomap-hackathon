@@ -625,7 +625,9 @@ class MainWindow(QMainWindow):
         self.showFullScreen()
         self.raise_()
         self.activateWindow()
-        QTimer.singleShot(500, self._verify_fullscreen)
+        # macOS 原生全屏有 ~1s 动画，期间 geometry 还是旧值 —— 等它落定再校验，
+        # 否则会把"正在全屏"误判成"没全屏"而回退到铺满模式。
+        QTimer.singleShot(1600, self._verify_fullscreen)
 
     def _verify_fullscreen(self) -> None:
         if not self._fs_on:
@@ -635,14 +637,21 @@ class MainWindow(QMainWindow):
         covered = g.width() >= scr.width() - 40 and g.height() >= scr.height() - 40
         if self.isFullScreen() and covered:
             return
-        # 回退：无边框 + 置顶 + 铺满（不依赖 macOS 全屏 Space）
+        self._cover_fullscreen()
+        self.set_status("已用无边框全屏（原生全屏未生效，属 macOS 正常表现）")
+
+    def _cover_fullscreen(self) -> None:
+        """铺满屏幕：无边框 + 置顶，不进入 macOS 独立全屏 Space（录屏/截图更可控）。"""
+        self._fs_on = True
         self._fake_fs = True
+        self.b_full.setText("退出全屏")
+        scr = (self.screen() or QApplication.primaryScreen()).geometry()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
         self.setGeometry(scr)
         self.show()
         self.raise_()
         self.activateWindow()
-        self.set_status("已用无边框全屏（原生全屏未生效，属 macOS 正常表现）")
+        self.teleop.pad.setFocus()
 
     def _leave_fullscreen(self) -> None:
         self._fs_on = False
@@ -724,7 +733,8 @@ class _EventSpy(QObject):
 def run_gui(url: str = DEFAULT_URL, *, autostart: bool = True, windowed: bool = False,
             backend: str = "rebot", arm_repo: str | None = None,
             gesture_camera: int = 2, service_log: str = "/tmp/rebot_gui_serve.log",
-            start_panel: bool = False, debug_events: bool = False) -> int:
+            start_panel: bool = False, debug_events: bool = False,
+            cover: bool = False) -> int:
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("reBot 采集端")
     app.setStyleSheet(theme.QSS)
@@ -759,7 +769,9 @@ def run_gui(url: str = DEFAULT_URL, *, autostart: bool = True, windowed: bool = 
     win.show()
     win.raise_()
     win.activateWindow()
-    if not windowed:
+    if cover:
+        win._cover_fullscreen()          # 铺满（无边框 + 置顶），不占独立全屏 Space
+    elif not windowed:
         win._enter_fullscreen()
     return app.exec()
 

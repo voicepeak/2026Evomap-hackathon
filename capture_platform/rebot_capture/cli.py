@@ -89,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     p_gui.add_argument("--gesture-camera", type=int, default=2, help="自动拉起服务时的手势相机索引")
     p_gui.add_argument("--service-log", default="/tmp/rebot_gui_serve.log", help="自动拉起服务的日志路径")
     p_gui.add_argument("--panel", action="store_true", help="启动即显示控制面板（用于先配相机）")
+    p_gui.add_argument("--cover", action="store_true",
+                       help="铺满屏幕模式（无边框 + 置顶，不占独立全屏 Space；录屏/截图用）")
     p_gui.add_argument("--debug-events", action="store_true", help="打印键鼠事件（排查幽灵输入用）")
 
     p_self = sub.add_parser("selftest", help="无硬件自检：遥操→录制→质检→打包")
@@ -140,6 +142,7 @@ def main(argv: list[str] | None = None) -> int:
             service_log=args.service_log,
             start_panel=args.panel,
             debug_events=args.debug_events,
+            cover=args.cover,
         )
 
     if args.cmd == "selftest":

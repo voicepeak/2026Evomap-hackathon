@@ -53,7 +53,7 @@
         <div><dt>电机</dt><dd><b data-count="7">0</b></dd></div>
         <div><dt>落盘帧率</dt><dd><b data-count="93">0</b><i>fps</i></dd></div>
         <div><dt>丢帧</dt><dd><b data-count="0" data-decimals="2">0</b><i>%</i></dd></div>
-        <div><dt>最佳等级</dt><dd><b>A</b><i>85.6</i></dd></div>
+        <div><dt>数据集</dt><dd><b data-count="7">0</b><i>集</i></dd></div>
       </dl>
     </div>
 
@@ -260,20 +260,22 @@
       <h3>数据集现状</h3>
       <table class="data-table">
         <tbody>
-          <tr><th>数据集</th><td>4 个（session_2 含 A 级）</td></tr>
-          <tr><th>episode</th><td>7 集 / 28,245 帧</td></tr>
+          <tr><th>数据集</th><td>4 个（7 条 episode）</td></tr>
+          <tr><th>数据量</th><td>7 集 / 28,245 帧</td></tr>
           <tr><th>成功标记</th><td>6 条成功 · 1 条失败留档</td></tr>
-          <tr><th>最佳质量分</th><td><b class="hl">85.6 · A 级</b>（session_2 #1）</td></tr>
+          <tr><th>质量分</th><td>78.7 – 85.6（A×1 / B×4 / F×2）</td></tr>
           <tr><th>溯源</th><td>MANIFEST.json + 每条 sha256</td></tr>
         </tbody>
       </table>
+      <p class="card-foot">注：评分卡仍缺「运动覆盖」维度 —— 静止录制也可能拿高分，
+        已列入下方「边界」。上表是现状，不是结论。</p>
     </div>
   </div>
 
   <div class="grid grid-2 shots">
     <figure class="shot reveal">
-      <img src="assets/gui_teleop.jpg" alt="遥操作界面：整屏画板 + 四角 HUD" loading="lazy" />
-      <figcaption><b>遥操作界面</b>整屏画板 + 四角 HUD：模式/冻结/速度、两路相机、电机选择、录制状态</figcaption>
+      <img src="assets/traj.jpg" alt="一条真实 episode 的 7 自由度动作曲线" loading="lazy" />
+      <figcaption><b>真实动作曲线</b>6 关节 + 夹爪，来自 <code>data/episodes/20260923_135010</code>（5510 帧 / 59.4s）；每个关节按自身范围缩放，否则小幅运动会被压成直线</figcaption>
     </figure>
     <figure class="shot reveal">
       <img src="assets/gui_panel.jpg" alt="控制面板：相机、关节、质量、历史数据" loading="lazy" />
@@ -329,6 +331,7 @@
   </div>
   <div class="limits">
     <div class="limit reveal"><span class="tag tag-do">已跑通</span><p>真机遥操采集 → 质检 → 打包 → 回放；7 电机 / 4 数据集可查</p></div>
+    <div class="limit reveal"><span class="tag tag-todo">评分缺陷</span><p>评分卡缺「运动覆盖」维度：静止录制也能拿高分（现有一条 A 级 episode 就是全静止的），需要补覆盖度/有效行程判据</p></div>
     <div class="limit reveal"><span class="tag tag-todo">未接入</span><p>训练链路（ACT 等）：仓库里只有数据与回放，没有训练代码</p></div>
     <div class="limit reveal"><span class="tag tag-todo">未对齐</span><p>数据集是 LeRobot 风格，但未逐字段对齐 v3，需要转换器</p></div>
     <div class="limit reveal"><span class="tag tag-todo">待加</span><p>多路同录（wrist + scene）：当前只录选中的那一路相机</p></div>
