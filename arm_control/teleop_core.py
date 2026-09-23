@@ -41,8 +41,10 @@ VMAX = 0.08
 QD_MAX = 1.0
 TWIST_RATE = math.radians(35.0)
 LIMIT_MARGIN = math.radians(1.5)
-LIMIT_SOFT = 0.12
-LIMIT_K = 0.35
+# 平台调整（原上游 0.12 rad / 0.35 rad/s）：限位附近只轻微回推，
+# 避免"顶不进去 / 过去了又被弹回来"的死区与反弹感。
+LIMIT_SOFT = math.radians(3.0)
+LIMIT_K = 0.12
 ORI_K = 1.5
 ORI_VMAX = 0.4
 REPLAY_KP = 1.2
@@ -88,15 +90,57 @@ def vel_from_px(v_px: float, vmax: float, travel: float = TRAVEL_PX, dead: float
     return math.copysign((f ** EXPO) * vmax, v_px)
 
 
-def limit_repulse(q: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
+def limit_repulse(q: np.ndarray, lo: np.ndarray, hi: np.ndarray,
+                  band: float = LIMIT_SOFT, k: float = LIMIT_K) -> np.ndarray:
     z = np.zeros(6)
     for i in range(6):
-        m = min(LIMIT_SOFT, 0.5 * (hi[i] - lo[i]))
+        m = min(float(band), 0.5 * (hi[i] - lo[i]))
+        if m <= 0:
+            continue
         if q[i] < lo[i] + m:
-            z[i] = LIMIT_K * (1.0 - (q[i] - lo[i]) / m)
+            z[i] = float(k) * (1.0 - (q[i] - lo[i]) / m)
         elif q[i] > hi[i] - m:
-            z[i] = -LIMIT_K * (1.0 - (hi[i] - q[i]) / m)
-    return np.clip(z, -LIMIT_K, LIMIT_K)
+            z[i] = -float(k) * (1.0 - (hi[i] - q[i]) / m)
+    return np.clip(z, -float(k), float(k))
+
+
+def soft_box_velocity(v_cmd: np.ndarray, p_cur: np.ndarray, *,
+                      box_scale: float = 1.0, band: float = 0.04,
+                      bx=BX, by=BY, bz=BZ, rmax: float = RMAX) -> np.ndarray:
+    """安全盒软边界：接近边界时按剩余空间成比例减速（可以慢慢贴边），越界方向直接禁止。
+
+    与旧行为（一旦预测越界就把该方向速度置 0）相比：不再有"推不动"的死区，
+    边界附近仍有安全约束（速度随剩余空间线性趋 0，不会越界）。
+    """
+    v = np.asarray(v_cmd, float).copy()
+    p = np.asarray(p_cur, float)[:3]
+    for axis, b in enumerate((bx, by, bz)):
+        center = 0.5 * (b[0] + b[1])
+        half = 0.5 * (b[1] - b[0]) * float(box_scale)
+        lo_, hi_ = center - half, center + half
+        if v[axis] > 0:
+            room = hi_ - p[axis]
+        elif v[axis] < 0:
+            room = p[axis] - lo_
+        else:
+            continue
+        if room <= 0:                     # 已在界外：只允许往界内走
+            v[axis] = 0.0
+        elif room < band * box_scale:
+            v[axis] *= room / (band * box_scale)
+    # 半径上限：只削掉"向外"的径向分量，切向保留（可以沿弧线滑动，不卡死）
+    r = float(np.hypot(p[0], p[1]))
+    if r > 1e-9:
+        radial = (p[0] * v[0] + p[1] * v[1]) / r
+        if radial > 0:
+            room_r = rmax * float(box_scale) - r
+            band_r = band * float(box_scale)
+            scale = 0.0 if room_r <= 0 else (1.0 if room_r >= band_r else room_r / band_r)
+            if scale < 1.0:
+                drop = radial * (1.0 - scale)
+                v[0] -= drop * p[0] / r
+                v[1] -= drop * p[1] / r
+    return v
 
 
 def rotvec_err(rpy_ref: np.ndarray, rpy_cur: np.ndarray) -> np.ndarray:
@@ -146,8 +190,11 @@ class CoreArgs:
     wmax_deg: float = 30.0
     j_rate: float = 60.0
     limit_margin: float = 1.5
+    limit_soft: float = LIMIT_SOFT     # 限位排斥作用带（rad）
+    limit_k: float = LIMIT_K           # 限位排斥最大速度（rad/s）
     box: bool = True
     box_scale: float = 1.0
+    box_band: float = 0.04             # 安全盒软边界缓冲带（m）
     float_kd: float = 2.5
     tau_limit: float = 0.0
     gripper: bool = True
@@ -574,20 +621,10 @@ class TeleopCore:
             w_cmd = np.zeros(3)
             twist_cmd = 0.0
 
-        # ── 2. 安全盒 ──
+        # ── 2. 安全盒（软边界：接近边界按剩余空间成比例减速，可慢慢贴边）──
         if self.args.box:
-            look = 0.25
-            p_next = p_cur0 + v_cmd * look
-            for k, (b, s) in enumerate(((BX, self.args.box_scale), (BY, self.args.box_scale),
-                                        (BZ, self.args.box_scale))):
-                c_ = 0.5 * (b[0] + b[1])
-                h_ = 0.5 * (b[1] - b[0]) * s
-                if abs(p_next[k] - c_) > h_:
-                    v_cmd[k] = 0.0
-            r_next = float(np.hypot(p_next[0], p_next[1]))
-            if r_next > RMAX * self.args.box_scale and (v_cmd[0] or v_cmd[1]):
-                v_cmd[0] = 0.0
-                v_cmd[1] = 0.0
+            v_cmd = soft_box_velocity(v_cmd, p_cur0, box_scale=self.args.box_scale,
+                                      band=self.args.box_band)
 
         # ── 3. 雅可比 → 关节速度 ──
         q_pad = pad_q_for_model(self.model, self.q_cmd, 6)
@@ -603,7 +640,8 @@ class TeleopCore:
         lam = float(self.args.damping) * (1.0 + 4.0 * max(0.0, 0.06 - smin) / 0.06)
         self.damp = lam
 
-        z = limit_repulse(self.q_cmd, self.lo, self.hi)
+        z = limit_repulse(self.q_cmd, self.lo, self.hi,
+                          band=float(self.args.limit_soft), k=float(self.args.limit_k))
         if float(self.args.posture_k) > 0:
             z = z + (-float(self.args.posture_k)) * (self.q_cmd - self.q_seed)
         if abs(twist_cmd) > 1e-6:
