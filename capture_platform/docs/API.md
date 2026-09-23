@@ -18,6 +18,7 @@ Base URL：`http://127.0.0.1:8787`
 | POST | `/api/teleop/mode` | 位置/姿态模式 | `{mode: "pos"|"ori"}` |
 | POST | `/api/teleop/float` | 悬停（漂浮） | `{on: bool}` |
 | POST | `/api/teleop/joint` | 关节直控（按住）/选关节 | `{index?: 0-6, hold?: rad/s}` |
+| POST | `/api/teleop/motor` | 选中电机并进入笔控直控（笔侧键左键；笔上下/左右驱动） | `{index: 0-6}`（6=夹爪，暂不动作） |
 | POST | `/api/teleop/twist` | J6 自转速度 | `{value: rad/s}` |
 | POST | `/api/teleop/align` | 重新对齐 | `{}` |
 | POST | `/api/teleop/preset` | 预设 记录/前往 | `{action: "record"|"goto", index: 1-4}` |
@@ -31,6 +32,14 @@ Base URL：`http://127.0.0.1:8787`
 | POST | `/api/episode/discard` | 丢弃当前 episode | `{}` |
 | GET | `/api/episodes` | episode 列表 | `?details=true|false` |
 | POST | `/api/pack` | 打包数据集（默认只含非 F 级） | `{name?, task_instruction?, include_failed?}` |
+| GET | `/api/camera/status` | 相机列表 / 预览状态 | — |
+| POST | `/api/camera/probe` | 探测相机 | `{}` |
+| POST | `/api/camera/open` | 打开相机（本机索引或 MJPEG URL） | `{index?: 0-8, url?}` |
+| POST | `/api/camera/close` | 关闭相机（省略=当前选中） | `{index?}` |
+| POST | `/api/camera/alias` | 给相机起数据集里的名字（wrist/scene…） | `{name, index?, url?}` |
+| GET | `/api/camera/stream` | MJPEG 预览流 | `?index=N`（省略=当前选中） |
+| GET | `/api/gesture` | 手势夹爪状态（enabled/gesture/target/camera/error） | — |
+| POST | `/api/gesture` | 启停手势夹爪（张开手=张开行程，握拳=闭合行程） | `{on?: bool}` |
 
 错误约定：状态冲突（重复开始/未开始就结束）返回 `409 + detail`。
 
