@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import platform
 import sys
 
@@ -118,7 +120,12 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"rebot-capture {__version__} → http://{args.host}:{args.port}  (backend={args.backend})")
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
-        return 0
+
+        # 收尾：uvicorn 已经把该做的都做完了（lifespan 里平滑归零 + 释放设备 + 停线程），
+        # 但 MediaPipe 的 GL/推理线程会让解释器卡在 finalization（现象：端口已释放、
+        # "Application shutdown complete" 之后进程一直不退）。这里直接收尾。
+        logging.shutdown()
+        os._exit(0)
 
     if args.cmd == "gui":
         from .gui.app import run_gui

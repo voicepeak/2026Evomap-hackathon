@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -48,12 +49,16 @@ def _health(url: str, timeout: float = 2.0) -> dict | None:
 
 def ensure_service(url: str, *, autostart: bool, backend: str = "rebot",
                    arm_repo: str | None = None, gesture_camera: int = 2,
-                   log_path: str = "/tmp/rebot_gui_serve.log") -> tuple[bool, str]:
-    """确保本地服务在跑；不在则拉起（继承 Terminal 的相机权限）。"""
+                   log_path: str = "/tmp/rebot_gui_serve.log",
+                   ) -> tuple[bool, str, subprocess.Popen | None]:
+    """确保本地服务在跑；不在则拉起（继承 Terminal 的相机权限）。
+
+    返回 (是否就绪, 失败详情, 本进程拉起的服务句柄或 None)。
+    """
     if _health(url) is not None:
-        return True, ""
+        return True, "", None
     if not autostart:
-        return False, "服务未运行（用 --autostart 或先跑 run_serve.command）"
+        return False, "服务未运行（用 --autostart 或先跑 run_serve.command）", None
 
     port = url.rstrip("/").rsplit(":", 1)[-1]
     cmd = [sys.executable, "-m", "rebot_capture", "serve", "--backend", backend,
@@ -63,18 +68,18 @@ def ensure_service(url: str, *, autostart: bool, backend: str = "rebot",
         cmd += ["--arm-repo", repo]
     log = open(log_path, "ab", buffering=0)
     log.write(f"\n=== rebot GUI 拉起服务 {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n".encode())
-    subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
-                     start_new_session=True)
+    proc = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+                            start_new_session=True)
     for _ in range(120):            # 最多等 30s（真机要连 CAN + 使能）
         time.sleep(0.25)
         if _health(url) is not None:
-            return True, ""
+            return True, "", proc
     tail = ""
     try:
         tail = Path(log_path).read_text(encoding="utf-8", errors="replace")[-1500:]
     except Exception:  # noqa: BLE001
         pass
-    return False, f"服务启动失败，日志尾部：\n\n{tail}"
+    return False, f"服务启动失败，日志尾部：\n\n{tail}", proc
 
 
 # ──────────────────────────────────────────────────────────────────────── #
@@ -653,10 +658,37 @@ class MainWindow(QMainWindow):
         self.teleop.pad.setFocus()
 
     def closeEvent(self, ev) -> None:  # noqa: N802
+        # 关界面时：先断开自己的连接（否则 uvicorn 会等 WebSocket 关闭而卡住），
+        # 再让"本界面拉起的服务"平滑归零后退出（机械臂保持悬停，不失能）。
+        # 顺序：SIGINT（走 lifespan → park）→ 超时再 SIGINT → SIGTERM → 最后 SIGKILL。
         try:
             self.client.stop()
         except Exception:  # noqa: BLE001
             pass
+        proc = getattr(self, "_service_proc", None)
+        if proc is None or proc.poll() is not None:
+            super().closeEvent(ev)
+            return
+
+        self.set_status("正在停止服务：机械臂平滑归零中…（请勿断电）")
+        QApplication.processEvents()
+        for sig, wait_s, note in (
+            (signal.SIGINT, 12.0, ""),
+            (signal.SIGINT, 6.0, "服务仍在退出中，补发一次中断…"),
+            (signal.SIGTERM, 4.0, "服务未响应中断，改用 TERM…"),
+            (signal.SIGKILL, 3.0, "⚠️ 已强制结束服务：机械臂保持当前姿态，下次启动前请先归零"),
+        ):
+            try:
+                if proc.poll() is not None:
+                    break
+                if note:
+                    self.set_status(note)
+                    QApplication.processEvents()
+                proc.send_signal(sig)
+                proc.wait(timeout=wait_s)
+                break
+            except Exception:  # noqa: BLE001
+                continue
         super().closeEvent(ev)
 
 
@@ -710,10 +742,11 @@ def run_gui(url: str = DEFAULT_URL, *, autostart: bool = True, windowed: bool = 
     pal.setColor(QPalette.ColorRole.ButtonText, QColor(theme.TEXT))
     app.setPalette(pal)
 
-    ok, detail = ensure_service(url, autostart=autostart, backend=backend,
-                                arm_repo=arm_repo, gesture_camera=gesture_camera,
-                                log_path=service_log)
+    ok, detail, service_proc = ensure_service(url, autostart=autostart, backend=backend,
+                                              arm_repo=arm_repo, gesture_camera=gesture_camera,
+                                              log_path=service_log)
     win = MainWindow(url, start_panel=start_panel)
+    win._service_proc = service_proc
     if not ok:
         win.set_status(detail.splitlines()[0] if detail else "服务未连接", error=True)
         QTimer.singleShot(300, lambda: QMessageBox.warning(
