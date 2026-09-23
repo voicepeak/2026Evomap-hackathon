@@ -1,0 +1,11 @@
+# 运行产物
+data/
+*.pyc
+__pycache__/
+
+# 环境
+.venv/
+.env
+
+# 系统
+.DS_Store

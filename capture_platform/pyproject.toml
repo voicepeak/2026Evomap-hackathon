@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rebot-capture"
+version = "0.1.0"
+description = "RDP 采集平台 · 采集端（本地优先 / 离线可用）"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.27",
+  "websockets>=12",
+  "numpy>=1.24",
+  "pyarrow>=15",
+  "pydantic>=2.5",
+]
+
+[project.optional-dependencies]
+camera = ["opencv-python-headless>=4.8"]
+arm = ["pin>=3.0", "motorbridge>=0.3.2", "pyyaml>=6.0"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+rebot-capture = "rebot_capture.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["rebot_capture*"]
+
+[tool.setuptools.package-data]
+rebot_capture = ["web/*"]
