@@ -1,0 +1,67 @@
+{
+  "workspace": "rebot_workspace_20260923",
+  "updated_at": "2026-09-23T17:16:02",
+  "components": {
+    "capture_platform": {
+      "files": 52,
+      "size_mb": 0.24
+    },
+    "arm_control": {
+      "files": 176,
+      "size_mb": 105.34
+    },
+    "tablet_teleop": {
+      "files": 4,
+      "size_mb": 0.04
+    },
+    "docs": {
+      "files": 5,
+      "size_mb": 0.07
+    }
+  },
+  "data": {
+    "raw_episodes": 2,
+    "raw_files": [
+      "20260923_134109_ep000002.parquet",
+      "20260923_135010_ep000002.parquet"
+    ],
+    "datasets": [
+      {
+        "name": "session_0905_all",
+        "episodes": 3,
+        "frames": 14145,
+        "videos": 0
+      },
+      {
+        "name": "session_0905_b",
+        "episodes": 1,
+        "frames": 9777,
+        "videos": 0
+      },
+      {
+        "name": "session_2",
+        "episodes": 2,
+        "frames": 5803,
+        "videos": 0
+      },
+      {
+        "name": "session_3",
+        "episodes": 1,
+        "frames": 5510,
+        "videos": 0
+      }
+    ],
+    "datasets_with_video": 0,
+    "archive": "ARCHIVE_20260923.tar.gz",
+    "raw_sha256_prefix": {
+      "20260923_134109_ep000002.parquet": "4d3e88f651ae3bba",
+      "20260923_135010_ep000002.parquet": "2f27c57098dbf7cd"
+    }
+  },
+  "notes": [
+    "capture_platform/.venv 未入库（README 第二节重建）",
+    "arm_control 原 .git 历史已移到 .rollback/arm_control_git_20260923",
+    "相机权限：服务需在 Terminal 中启动才能继承相机权限",
+    "手势夹爪：电脑摄像头（默认 --gesture-camera 2），张开手/握拳控制夹爪行程"
+  ]
+}

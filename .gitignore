@@ -1,0 +1,20 @@
+# 运行环境与产物
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.DS_Store
+
+# 回滚归档与旧 git 历史
+.rollback/
+
+# 运行日志与本地模型（不进仓库）
+arm_control/logs/
+arm_control/models/
+
+# 采集数据（保留在本地；capture_platform/.gitignore 已忽略 data/）
+capture_platform/data/
+
+# 本地模型（不进仓库）
+capture_platform/models/
