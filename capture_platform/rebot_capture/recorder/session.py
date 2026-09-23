@@ -74,6 +74,7 @@ class CaptureService:
         self._last_state: JointState | None = None
         self._last_action: np.ndarray | None = None
         self._tick_times: deque[float] = deque(maxlen=200)
+        self._gesture_updates = 0
 
     # ================================================================== #
     # 生命周期
@@ -252,19 +253,24 @@ class CaptureService:
     # 手势（电脑摄像头）→ 夹爪行程
     # ================================================================== #
     def _apply_gesture_locked(self) -> None:
-        """把已稳定的手势行程目标交给控制核心（限速/力矩保护由核心负责）。"""
+        """把"手势变化"的行程目标交给控制核心（限速/力矩保护由核心负责）。
+
+        只在 updates 变化时下发：同一手势保持不会反复覆盖，手动（笔/Q/A）调整
+        夹爪后不会被持续抢回；换手势或手离开后再做同一手势会重新生效。
+        """
         if self.gesture is None or self.core_mapper is None:
             return
         st = self.gesture.state()
         target = st.get("target")
-        if target is None:
+        if target is None or int(st.get("updates") or 0) == self._gesture_updates:
             return
         core = self.core_mapper.core
         if core.freeze or not core.grip_ready:
             return
         if abs(core.j_req) > 1e-6 and int(core.j_sel) == 6:
-            return          # 手动夹爪直控优先（Q/A 或界面按钮）
+            return          # 手动夹爪直控进行中：等松手后的下一次手势变化再接管
         core.set_gripper_target(float(target))
+        self._gesture_updates = int(st.get("updates") or 0)
 
     def gesture_state(self) -> dict | None:
         return self.gesture.state() if self.gesture is not None else None

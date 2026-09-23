@@ -26,7 +26,10 @@ GRIP_KD = 2.0
 GRIP_RATE = 1.20                    # rad/s（约 69°/s）
 GRIP_LO = math.radians(3.0)         # 程序可用下界
 GRIP_HI = math.radians(328.0)       # 程序可用上界
-GRIP_TAU_LIMIT = 1.0                # N·m
+GRIP_TAU_LIMIT = 1.0
+GRIP_RECOVER_ERR = math.radians(15.0)   # 命令与实测偏差超过它 + 无力矩 → 认为电机掉了使能
+GRIP_RECOVER_WAIT = 2.0                 # 持续这么久才自愈
+GRIP_RECOVER_COOLDOWN = 5.0             # 自愈重试间隔                # N·m
 PARK_RATE = 0.25                    # rad/s
 START_GATE_RAD = 0.05
 DISABLE_GATE_RAD = 0.05
@@ -263,6 +266,25 @@ class RealArm:
             g["tau"] = 0.0
         if abs(g["tau"]) > GRIP_TAU_LIMIT:
             g["send"] = float(g["held"])  # 力矩保护：目标回退到实测（与上游一致）
+
+        # 自愈：命令与实测长期偏差大、但几乎没有力矩 → 电机多半被保护性失能了，
+        # 重新 mode_mit + enable（不追加力矩；到位后会自然跟随）。力矩大时不触发，
+        # 避免"顶住东西还反复使能硬顶"。
+        err = abs(float(g["send"]) - float(g["held"]))
+        t_g = time.monotonic()
+        if err > GRIP_RECOVER_ERR and abs(g["tau"]) < 0.2:
+            g["stuck_since"] = g.get("stuck_since") or t_g
+            if t_g - g["stuck_since"] > GRIP_RECOVER_WAIT and t_g - g.get("recover_at", 0.0) > GRIP_RECOVER_COOLDOWN:
+                try:
+                    g["group"].mode_mit()
+                    g["group"].enable()
+                    g["recover_at"] = t_g
+                    g["stuck_since"] = None
+                    print(f"[grip] 夹爪未跟随（偏差 {math.degrees(err):.0f}°，力矩≈0）→ 已重新使能", flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
+        else:
+            g["stuck_since"] = None
 
     # ================================================================== #
     def park(self, timeout: float = 25.0) -> None:

@@ -35,6 +35,7 @@ class GestureState:
     score: float = 0.0
     handedness: str = ""
     target: float | None = None   # 1.0=张开行程 0.0=闭合行程 None=未给出
+    updates: int = 0         # 生效次数（每次"手势变化"或"手离开后再次出现"加一）
     updated_s: float = 0.0   # 距最近一次稳定判定的秒数
     frames: int = 0
     fps: float = 0.0
@@ -85,9 +86,9 @@ class GestureWorker:
         model_path: Path | str | None = None,
         *,
         camera: int | None = None,
-        hold_s: float = 0.35,
+        hold_s: float = 0.3,
         interval_s: float = 0.08,
-        min_score: float = 0.5,
+        min_score: float = 0.45,
         recognizer=None,
     ):
         self._get_frame = frame_getter
@@ -100,6 +101,9 @@ class GestureWorker:
         self.interval_s = float(interval_s)
         self.min_score = float(min_score)
         self._state = GestureState(camera=camera)
+        self._committed = ""      # 已生效的手势（同一手势不重复触发）
+        self._updates = 0
+        self._gone_at: float | None = None   # 手离开画面的起始时间
 
     # ------------------------------------------------------------------ #
     def start(self) -> None:
@@ -174,15 +178,30 @@ class GestureWorker:
             now = time.monotonic()
 
             if action and action == candidate:
-                if now - candidate_since >= self.hold_s:
+                if now - candidate_since >= self.hold_s and action != self._committed:
+                    self._committed = action
+                    self._updates += 1
+                    self._gone_at = None
                     self._publish(gesture=action, raw=name, score=round(score, 3), handedness=hand,
-                                  target=TARGET_BY_ACTION[action], updated_s=now, error="")
-                    candidate = ""      # 提交后等下一次重新累计
+                                  target=TARGET_BY_ACTION[action], updates=self._updates,
+                                  updated_s=now, error="")
+                    candidate = ""
             elif action:
-                candidate = action
-                candidate_since = now
+                if action != self._committed:      # 与已生效手势相同 → 不重复触发
+                    candidate = action
+                    candidate_since = now
+                    self._gone_at = None
+                else:
+                    candidate = ""
             else:
                 candidate = ""
+                # 手离开画面一段时间 → 允许"再次出现同一手势"算一次新的触发
+                if self._committed:
+                    if self._gone_at is None:
+                        self._gone_at = now
+                    elif now - self._gone_at > 0.8:
+                        self._committed = ""
+                        self._gone_at = None
 
             with self._lock:
                 self._state.raw = name

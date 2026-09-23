@@ -88,6 +88,43 @@ def test_gesture_worker_open_and_fist():
     assert worker.state()["enabled"] is False
 
 
+def test_pen_drives_gripper_when_gripper_selected(core_env):
+    """选中"夹爪"后，笔上划 = 张开行程、下划 = 闭合行程（手势之外的手动兜底）。"""
+    core = _make_core(core_env)
+    core.select_motor(6)
+    base = core.grip_cmd
+    core.set_pen(0.0, 0.0, True)
+    core.set_pen(0.0, -150.0, True)          # 上划
+    for _ in range(30):
+        core.step(DT, core.q_cmd.copy())
+    assert core.grip_cmd > base + 1e-6, "上划应向张开方向走"
+
+    down = core.grip_cmd
+    core.set_pen(0.0, +150.0, True)          # 下划（锚点仍在原点）
+    for _ in range(30):
+        core.step(DT, core.q_cmd.copy())
+    assert core.grip_cmd < down, "下划应向闭合方向走"
+
+
+def test_same_gesture_does_not_repeat_but_rearms_after_gap():
+    fake = _FakeRecognizer([[("Open_Palm", 0.9, "Left")]])
+    worker = GestureWorker(lambda: np.zeros((8, 8, 3), dtype=np.uint8),
+                           recognizer=fake, hold_s=0.02, interval_s=0.01)
+    worker.start()
+    try:
+        st = _wait_state(worker, lambda s: s["target"] == 1.0)
+        n1 = int(st["updates"])
+        time.sleep(0.3)
+        assert worker.state()["updates"] == n1, "同一手势保持不应反复触发"
+        fake.script = [[]]                                  # 手离开画面
+        time.sleep(1.0)
+        fake.script = [[("Open_Palm", 0.9, "Left")]]        # 同一个手势再次出现
+        st2 = _wait_state(worker, lambda s: int(s["updates"]) == n1 + 1, timeout=3.0)
+        assert int(st2["updates"]) == n1 + 1, "手离开后再做同一手势应重新生效"
+    finally:
+        worker.stop()
+
+
 def test_gesture_worker_ignores_weak_or_other_gestures():
     fake = _FakeRecognizer([[("Open_Palm", 0.92, "Left")]])
     worker = GestureWorker(lambda: np.zeros((8, 8, 3), dtype=np.uint8),

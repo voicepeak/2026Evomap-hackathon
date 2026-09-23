@@ -74,7 +74,7 @@ JOINT_PEN_MAP: dict[int, tuple[str, float]] = {
     3: ("y", +1.0),   # J4 腕部俯仰（+ = 抬头）
     4: ("x", +1.0),   # J5 腕部偏航
     5: ("x", +1.0),   # J6 腕部自转
-    # 6 = 夹爪：计划由摄像头检测控制，暂不由笔驱动
+    6: ("y", +1.0),   # 夹爪：上划 = 张开行程，下划 = 闭合行程（手势之外的手动兜底）
 }
 JOINT_PEN_RATE = math.radians(60.0)   # 笔满偏时的关节速度（与 Q/A 直控一致）
 MOTOR_NAMES = ("J1 肩部水平", "J2 肩部俯仰", "J3 肘部俯仰",
@@ -406,7 +406,7 @@ class TeleopCore:
 
     def motor_msg(self) -> str:
         if self.j_sel >= 6 or self.j_sel not in JOINT_PEN_MAP:
-            return "电机直控：夹爪（计划由摄像头检测，暂不动作）"
+            return "电机直控：夹爪（笔上=张开 / 下=闭合）"
         axis = JOINT_PEN_MAP[self.j_sel][0]
         return f"电机直控：{MOTOR_NAMES[self.j_sel]}（笔{'上下' if axis == 'y' else '左右'}）"
 
