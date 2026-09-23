@@ -97,7 +97,9 @@ function renderJoints() {
   }
 
   $("fps-line").textContent = `${live.fps_actual ?? 0} fps`;
-  $("pen-hz").textContent = `${live.pen_hz ?? 0} Hz`;
+  // 笔速：顺便显示输入通道是否断开（区分"没落笔"和"通道断了"）
+  const wsOk = state.wsTeleop && state.wsTeleop.readyState === 1;
+  $("pen-hz").textContent = wsOk ? `${live.pen_hz ?? 0} Hz` : "笔通道断开";
 
   const lights = live.lights || {};
   setLight("light-drop", !lights.drop, lights.drop ? "bad" : "on");
