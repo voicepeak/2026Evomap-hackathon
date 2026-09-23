@@ -77,6 +77,18 @@ def main(argv: list[str] | None = None) -> int:
                          help="电脑摄像头索引（手势→夹爪行程；默认 0）")
     p_serve.add_argument("--no-gesture", action="store_true", help="关闭手势夹爪")
 
+    p_gui = sub.add_parser("gui", help="启动桌面 GUI（默认自动拉起本机服务）")
+    p_gui.add_argument("--url", default="http://127.0.0.1:8787", help="采集服务地址")
+    p_gui.add_argument("--no-autostart", action="store_true", help="不自动拉起服务（只连已有服务）")
+    p_gui.add_argument("--windowed", action="store_true", help="窗口模式启动（默认全屏）")
+    p_gui.add_argument("--backend", default="rebot", choices=["mock", "rebot"],
+                       help="自动拉起服务时用的后端（默认真机）")
+    p_gui.add_argument("--arm-repo", default=None, help="自动拉起服务时的 arm_control 路径")
+    p_gui.add_argument("--gesture-camera", type=int, default=2, help="自动拉起服务时的手势相机索引")
+    p_gui.add_argument("--service-log", default="/tmp/rebot_gui_serve.log", help="自动拉起服务的日志路径")
+    p_gui.add_argument("--panel", action="store_true", help="启动即显示控制面板（用于先配相机）")
+    p_gui.add_argument("--debug-events", action="store_true", help="打印键鼠事件（排查幽灵输入用）")
+
     p_self = sub.add_parser("selftest", help="无硬件自检：遥操→录制→质检→打包")
     p_self.add_argument("--quiet", action="store_true")
     p_self.add_argument("--ik", action="store_true", help="额外做运动学/映射自检（需要 reBotArm_control_py）")
@@ -107,6 +119,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"rebot-capture {__version__} → http://{args.host}:{args.port}  (backend={args.backend})")
         uvicorn.run(app, host=args.host, port=args.port, log_level="info")
         return 0
+
+    if args.cmd == "gui":
+        from .gui.app import run_gui
+
+        return run_gui(
+            args.url,
+            autostart=not args.no_autostart,
+            windowed=args.windowed,
+            backend=args.backend,
+            arm_repo=args.arm_repo,
+            gesture_camera=args.gesture_camera,
+            service_log=args.service_log,
+            start_panel=args.panel,
+            debug_events=args.debug_events,
+        )
 
     if args.cmd == "selftest":
         from .selftest import run_ik_selftest, run_selftest

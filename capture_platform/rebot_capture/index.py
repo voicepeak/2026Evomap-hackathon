@@ -47,7 +47,45 @@ def _parquet_stats(path: Path) -> dict[str, Any]:
         return {"error": f"{type(e).__name__}: {e}"}
 
 
-def build_index(out: Path | None = None) -> dict[str, Any]:
+def _dataset_detail(d: Path, info: dict[str, Any]) -> dict[str, Any]:
+    """数据集里的逐条 episode（等级/分数/成功/时长），供界面列表与回放选择。"""
+    eps: list[dict[str, Any]] = []
+    meta = d / "meta" / "episodes.jsonl"
+    if meta.exists():
+        for line in meta.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            eps.append({
+                "index": row.get("episode_index"),
+                "length": row.get("length"),
+                "duration_s": row.get("duration_s"),
+                "success": row.get("success"),
+                "grade": row.get("grade"),
+                "score": row.get("score"),
+                "video": row.get("video_file"),
+            })
+    tasks = []
+    task_file = d / "meta" / "tasks.jsonl"
+    if task_file.exists():
+        for line in task_file.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    tasks.append(json.loads(line).get("task"))
+                except json.JSONDecodeError:
+                    continue
+    return {"episodes_detail": eps, "tasks": [t for t in tasks if t]}
+
+
+def library(out: Path | None = None) -> dict[str, Any]:
+    """磁盘上的历史数据清单（只读，不写 MANIFEST.json；界面刷新用）。"""
+    return build_index(out, write=False)
+
+
+def build_index(out: Path | None = None, write: bool = True) -> dict[str, Any]:
     raw_files = sorted(episodes_dir().glob("*.parquet"))
     episodes = []
     for p in raw_files:
@@ -56,6 +94,8 @@ def build_index(out: Path | None = None) -> dict[str, Any]:
             "path": str(p),
             "size_bytes": p.stat().st_size,
             "sha256": _sha256(p),
+            "has_video": p.with_suffix(".mp4").exists(),
+            "mtime": p.stat().st_mtime,
             **_parquet_stats(p),
         })
 
@@ -77,6 +117,7 @@ def build_index(out: Path | None = None) -> dict[str, Any]:
             "features": list((info.get("features") or {}).keys()),
             "videos": len(videos),
             "size_mb": round(size / 1e6, 2),
+            **_dataset_detail(d, info),
         })
 
     total_frames = sum(int(e.get("frames") or 0) for e in episodes)
@@ -94,9 +135,10 @@ def build_index(out: Path | None = None) -> dict[str, Any]:
             "with_video": sum(1 for d in datasets if d["videos"] > 0),
         },
     }
-    target = Path(out) if out else data_home() / "MANIFEST.json"
-    target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    manifest["written_to"] = str(target)
+    if write:
+        target = Path(out) if out else data_home() / "MANIFEST.json"
+        target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        manifest["written_to"] = str(target)
     return manifest
 
 

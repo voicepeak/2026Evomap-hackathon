@@ -515,6 +515,9 @@ function setupPad() {
     if (state.touching) send(ev, false);
   });
   pad.addEventListener("pointerleave", (ev) => { if (ev.buttons === 0) send(ev, false); });
+  // 兜底：窗口失焦 / 切到后台时强制抬笔，避免"pointerup 丢失 → 一直发落笔"的悬挂状态
+  window.addEventListener("blur", releasePen);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) releasePen(); });
 }
 
 /* ------------------------------------------------------------------ */

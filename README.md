@@ -43,10 +43,15 @@ rebot_workspace_20260923/
 ```bash
 cd capture_platform
 python3 -m venv .venv                       # Python 3.10+（本机用的是 3.12）
-.venv/bin/pip install -e ".[camera,arm]" -i https://pypi.tuna.tsinghua.edu.cn/simple
+.venv/bin/pip install -e ".[camera,arm,gui]" -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-`arm` 额外依赖会装 `pin`（Pinocchio）/`motorbridge`/`pyyaml`；`camera` 会装 `opencv-python-headless`。
+`arm` 额外依赖会装 `pin`（Pinocchio）/`motorbridge`/`pyyaml`；`camera` 会装 `opencv-python-headless`；
+`gui` 会装 `PySide6-Essentials`（桌面界面）。
+
+> ⚠️ **本机 venv 的"基础 Python"要留意**：这个 `.venv` 最早是用 Codex 运行时缓存里的 Python 3.12 建的
+> （`~/.cache/codex-runtimes/…/python`）。缓存被清理/更新会让整套依赖失效。
+> 工作区已保留副本 `.rollback/runtime_python_20260923/`，出问题**双击 `scripts/repair_env.command`** 即可指回来。
 
 ### 1. 机械臂归零（每次上电/失能后必做）
 
@@ -64,22 +69,41 @@ cd /Users/Admin/Desktop/reBotArm_control_py
 > 平台启动有安全门：**距零位 >0.05 rad 会拒绝使能**（不动、不失能）。所以先归零再起服务。
 > 失能只走 `disable_arm.py`（先归零后失能）。
 
-### 2. 启动平台（★ 必须在 Terminal 里启动）
+### 2. 启动（推荐桌面 GUI）
+
+```bash
+cd capture_platform
+./scripts/run_gui.command          # 双击也行：自动拉起服务 + 打开原生界面
+```
+
+`run_gui.command` 做了三件事：① 在 Terminal 里拉起采集服务（继承相机权限，已在跑就不重复起）
+② 打开原生 GUI ③ `caffeinate` 防止演示期间显示器休眠（休眠会让全屏画面变黑，容易误判成程序挂了）。
+
+- 「面板」按钮 / `Tab` 在 **遥操作视图 ↔ 控制面板** 之间切换（面板里配相机、看关节、打包、回放）
+- 键盘 `Space/F/O/H/R/Q/A/[/]/,/.` 与网页版一致（`F11` 全屏，`Q/A` 按住点动）
+- 原生全屏在 macOS 上若没生效（后台启动时常见），会自动回退成**无边框铺满 + 置顶**
+- GUI 只是客户端：遥操/录制/相机都在服务进程里，**后端逻辑没动**；网页界面仍可兜底使用
+
+<details>
+<summary>网页界面（备用 / 远程看画面）</summary>
 
 ```bash
 cd capture_platform
 ./scripts/run_serve.command                 # 或：.venv/bin/rebot-capture serve --backend rebot --arm-repo ../arm_control
 ```
 
-**为什么必须在 Terminal 里**：macOS 相机权限是按 App 授权的，`OpenCode.app` 没有相机权限，而 `Terminal.app` 有。
-在 Terminal 里启动 → 服务进程继承 Terminal 的权限 → 摄像头可直接打开。
-（日志会同时写到 `/tmp/rebot_serve.log`）
-
-### 3. 浏览器操作
-
 打开 **http://127.0.0.1:8787** → 相机卡片选 `wrist` → 开始会话 → 开始 Episode → 遥操 → 结束（成功）→ 打包数据集。
+服务日志写在 `/tmp/rebot_workspace_serve.log`。
 
-**控制端为整屏布局**：首次触板自动进入全屏，右上角「全屏」按钮可手动切换。笔操作（可全程不用键盘）：
+</details>
+
+**为什么必须在 Terminal 里启动**：macOS 相机权限是按 App 授权的，`OpenCode.app` 没有相机权限，而 `Terminal.app` 有。
+在 Terminal 里启动 → 服务进程继承 Terminal 的权限 → 摄像头可直接打开。
+
+**演示前请关掉旧浏览器标签页**：任何指向 `127.0.0.1:8787` 的旧页面都会往同一个服务发笔样本
+（实测见过一个标签页因 `pointerup` 丢失而持续发"落笔"，笔通道一直不是 0Hz，相当于有人一直按着笔）。
+
+### 3. 笔操作（GUI 与网页一致，可全程不用键盘）
 
 - **笔尖落笔**：位置模式 = 前后/横移；姿态模式 = 俯仰/摆头
 - **笔右键**（多数数位板在 macOS 上是"鼠标模拟"，只用右键做切换；不区分悬空/落笔）：
@@ -110,7 +134,11 @@ data/
 ```
 
 - **自动落盘**：每条 episode 结束即写 `episodes/*.parquet`（不管等级，F 级也留）
-- **打包**：只有通过质量硬门（丢帧<2%、限位<5%、有时长、成功标记）的才会进 `datasets/`
+- **历史可见**：面板「历史数据（磁盘）」列出已打包数据集（含每条等级/质量分，可点回放）和原始留档；
+  接口 `GET /api/library`。会话内的 episode 列表则在服务重启后会清空（内存态），历史数据不受影响
+- **打包**：只有通过质量硬门（丢帧<2%、限位<5%、有时长、成功标记）的才会进 `datasets/`；
+  若全部不合格，界面会询问**是否包含未过质检的 episode 一起打包**（等级如实写进元数据），
+  也可以直接调 API：`-d '{"task_instruction":"grasp and place","include_failed":true}'`（数据集名字需换新的）
 - **视频**（接相机后）：`datasets/<name>/videos/chunk-000/observation.images.<相机名>/episode_XXXXXX.mp4`
 - 清单重建：`cd capture_platform && .venv/bin/rebot-capture index`
 
@@ -118,14 +146,26 @@ data/
 
 ## 四、回放（演示/复现）
 
+**界面里两种来源**：
+
+- 面板「历史数据（磁盘）」里点任意一条（如 `#1 A 85.6 ▸`）→ 回放**磁盘上已打包数据集**里的那条，
+  服务重启也不影响（走 `dataset_path` + `index`）
+- 面板「录制 / 数据集」里的 `1× 2× 4×` → 回放**本次服务进程内**刚录的 episode
+
 ```bash
-# 1× / 2× / 4×（界面按钮已接），带关节速度上限保护
+# 命令行等价写法：从数据集回放第 2 条
 curl -X POST http://127.0.0.1:8787/api/replay \
   -H 'Content-Type: application/json' \
   -d '{"dataset_path":"data/datasets/session_3","index":2,"speed":4.0,"max_joint_speed_deg":720,"tau_abort":25}'
 ```
 
 回放中：`Space` 冻结中止｜落笔接管｜力矩超限自动停。回放前会先用最小 jerk 曲线到轨迹起点。
+
+历史数据清单（界面那块卡片用的接口）：
+
+```bash
+curl -s http://127.0.0.1:8787/api/library | python3 -m json.tool | head -30
+```
 
 ---
 
@@ -152,6 +192,8 @@ curl -X POST http://127.0.0.1:8787/api/replay \
 | LeRobot 转换 | 数据集是 LeRobot 风格但未逐字段对齐 v3；需转换器 |
 | 自动成功判定 | 现在靠人工按"成功"；需接入夹爪力/位置判定 |
 | 溯源 | MANIFEST 有哈希；设备序列号/标定/授权字段待补 |
+| 限位占用门 | J2/J3 的**零位就是下限**，停在折叠零位会被算成"限位占用"→ 可能判 F（演示前彩排确认，必要时用上面的 `include_failed`） |
+| 回放来源 | 界面上的 1×/2×/4× 用**内存里最近的 episode**；服务重启后需先录一条或先打包 |
 
 ---
 
@@ -160,6 +202,7 @@ curl -X POST http://127.0.0.1:8787/api/replay \
 | 组件 | 关键文件 | 作用 |
 |---|---|---|
 | 采集平台 | `capture_platform/rebot_capture/server/app.py` | REST + WS + Web UI |
+| **桌面 GUI** | `capture_platform/rebot_capture/gui/` | PySide6 原生界面（服务客户端） |
 | 控制核心（上游逻辑） | `arm_control/teleop_core.py` | 速度档/冻结/姿态模式/漂浮/直控/预设 |
 | 平台适配器 | `capture_platform/rebot_capture/teleop/rebot_core.py` | 把 teleop_core 接进平台（笔坐标 960×620 虚拟窗口） |
 | 真机后端 | `capture_platform/rebot_capture/device/real_arm.py` | 连接/读状态/MIT 下发/归零/失能门 |

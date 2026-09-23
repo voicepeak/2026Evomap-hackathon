@@ -1,12 +1,14 @@
 {
-  "generated_at": "2026-09-23T14:20:47",
-  "home": "/Users/Admin/Documents/Default Project/rebot_capture/data",
+  "generated_at": "2026-09-23T23:04:07",
+  "home": "/Users/Admin/Desktop/rebot_workspace_20260923/capture_platform/data",
   "raw_episodes": [
     {
       "file": "20260923_134109_ep000002.parquet",
-      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/episodes/20260923_134109_ep000002.parquet",
+      "path": "/Users/Admin/Desktop/rebot_workspace_20260923/capture_platform/data/episodes/20260923_134109_ep000002.parquet",
       "size_bytes": 304497,
       "sha256": "4d3e88f651ae3bba292c2f44f5c4a69ad13725a97686cc7924372eaead415634",
+      "has_video": false,
+      "mtime": 1790142349.0,
       "frames": 5310,
       "duration_s": 57.03,
       "fps": 93.1,
@@ -16,21 +18,37 @@
     },
     {
       "file": "20260923_135010_ep000002.parquet",
-      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/episodes/20260923_135010_ep000002.parquet",
+      "path": "/Users/Admin/Desktop/rebot_workspace_20260923/capture_platform/data/episodes/20260923_135010_ep000002.parquet",
       "size_bytes": 328200,
       "sha256": "2f27c57098dbf7cd932cc54be501d79deea17a00abcb9991a63758d9a93f643c",
+      "has_video": false,
+      "mtime": 1790142877.0,
       "frames": 5510,
       "duration_s": 59.37,
       "fps": 92.8,
       "has_velocity": false,
       "has_torque": false,
       "success": true
+    },
+    {
+      "file": "20260923_181011_ep000001.parquet",
+      "path": "/Users/Admin/Desktop/rebot_workspace_20260923/capture_platform/data/episodes/20260923_181011_ep000001.parquet",
+      "size_bytes": 326669,
+      "sha256": "e79b136ec6bebf56386a8e752400543a8f1a0e54ed7a47fb41cefb6bfd2d9c23",
+      "has_video": true,
+      "mtime": 1790158786.1960275,
+      "frames": 2936,
+      "duration_s": 32.29,
+      "fps": 90.9,
+      "has_velocity": true,
+      "has_torque": true,
+      "success": false
     }
   ],
   "datasets": [
     {
       "name": "session_0905_all",
-      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/datasets/session_0905_all",
+      "path": "/Users/Admin/Desktop/rebot_workspace_20260923/capture_platform/data/datasets/session_0905_all",
       "episodes": 3,
       "frames": 14145,
       "features": [
@@ -39,11 +57,43 @@
         "timestamp"
       ],
       "videos": 0,
-      "size_mb": 0.92
+      "size_mb": 0.92,
+      "episodes_detail": [
+        {
+          "index": 1,
+          "length": 3291,
+          "duration_s": 35.727,
+          "success": false,
+          "grade": "F",
+          "score": 80.9,
+          "video": null
+        },
+        {
+          "index": 2,
+          "length": 1077,
+          "duration_s": 11.923,
+          "success": false,
+          "grade": "F",
+          "score": 83.0,
+          "video": null
+        },
+        {
+          "index": 3,
+          "length": 9777,
+          "duration_s": 105.88,
+          "success": true,
+          "grade": "B",
+          "score": 79.6,
+          "video": null
+        }
+      ],
+      "tasks": [
+        "grasp-and-place"
+      ]
     },
     {
       "name": "session_0905_b",
-      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/datasets/session_0905_b",
+      "path": "/Users/Admin/Desktop/rebot_workspace_20260923/capture_platform/data/datasets/session_0905_b",
       "episodes": 1,
       "frames": 9777,
       "features": [
@@ -52,11 +102,25 @@
         "timestamp"
       ],
       "videos": 0,
-      "size_mb": 0.67
+      "size_mb": 0.67,
+      "episodes_detail": [
+        {
+          "index": 3,
+          "length": 9777,
+          "duration_s": 105.88,
+          "success": true,
+          "grade": "B",
+          "score": 79.6,
+          "video": null
+        }
+      ],
+      "tasks": [
+        "teleop demo"
+      ]
     },
     {
       "name": "session_2",
-      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/datasets/session_2",
+      "path": "/Users/Admin/Desktop/rebot_workspace_20260923/capture_platform/data/datasets/session_2",
       "episodes": 2,
       "frames": 5803,
       "features": [
@@ -65,11 +129,34 @@
         "timestamp"
       ],
       "videos": 0,
-      "size_mb": 0.32
+      "size_mb": 0.32,
+      "episodes_detail": [
+        {
+          "index": 1,
+          "length": 493,
+          "duration_s": 5.528,
+          "success": true,
+          "grade": "A",
+          "score": 85.6,
+          "video": null
+        },
+        {
+          "index": 2,
+          "length": 5310,
+          "duration_s": 57.047,
+          "success": true,
+          "grade": "B",
+          "score": 80.5,
+          "video": null
+        }
+      ],
+      "tasks": [
+        "teleop session 2"
+      ]
     },
     {
       "name": "session_3",
-      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/datasets/session_3",
+      "path": "/Users/Admin/Desktop/rebot_workspace_20260923/capture_platform/data/datasets/session_3",
       "episodes": 1,
       "frames": 5510,
       "features": [
@@ -78,13 +165,27 @@
         "timestamp"
       ],
       "videos": 0,
-      "size_mb": 0.33
+      "size_mb": 0.33,
+      "episodes_detail": [
+        {
+          "index": 2,
+          "length": 5510,
+          "duration_s": 59.381,
+          "success": true,
+          "grade": "B",
+          "score": 78.7,
+          "video": null
+        }
+      ],
+      "tasks": [
+        "teleop session 3"
+      ]
     }
   ],
   "totals": {
-    "raw_episodes": 2,
-    "raw_frames": 10820,
-    "raw_minutes": 1.94,
+    "raw_episodes": 3,
+    "raw_frames": 13756,
+    "raw_minutes": 2.48,
     "datasets": 4,
     "with_video": 0
   }

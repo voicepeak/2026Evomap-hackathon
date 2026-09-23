@@ -176,13 +176,16 @@ def create_app(
         return camera.set_alias(key, body.name)
 
     @app.get("/api/camera/stream")
-    async def camera_stream(request: Request, index: int | None = None):
+    async def camera_stream(request: Request, index: int | None = None, url: str | None = None):
+        # index = USB 相机索引；url = 桥接相机地址；都不给 = 当前选中的那路
+        key = url if url else index
+
         async def gen():
             boundary = b"--frame\r\n"
             while True:
                 if await request.is_disconnected():
                     break
-                jpg = camera.snapshot(index)
+                jpg = camera.snapshot(key)
                 if jpg:
                     yield boundary + b"Content-Type: image/jpeg\r\nContent-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n"
                 await asyncio.sleep(1.0 / 20.0)
@@ -340,6 +343,13 @@ def create_app(
     @app.get("/api/episodes")
     def episodes(details: bool = False) -> dict:
         return {"episodes": service.episodes_list(with_details=details)}
+
+    @app.get("/api/library")
+    def api_library() -> dict:
+        """磁盘上的历史数据：已打包数据集（含逐条等级/分数）+ 原始 episode 留档。"""
+        from ..index import library as _library
+
+        return _library()
 
     @app.post("/api/pack")
     def pack(body: PackIn) -> dict:
