@@ -56,7 +56,7 @@ for _ in range(120):
         time.sleep(.5)
 else:
     raise SystemExit('服务未就绪，未恢复相机。')
-for index, name in [(1, 'wrist'), (2, 'operator')]:
+for index, name in [(2, 'operator'), (1, 'wrist')]:
     for path, body in [('/api/camera/open', {'index': index}),
                        ('/api/camera/alias', {'index': index, 'name': name})]:
         req = urllib.request.Request(base + path, data=json.dumps(body).encode(),

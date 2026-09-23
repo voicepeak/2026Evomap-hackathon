@@ -667,6 +667,7 @@ async function boot() {
     state.profile = await api("/api/profile");
     state.status = await api("/api/device/status");
     renderChips();
+    renderCamera(state.status.camera);   // 小画面不依赖 WS，加载即出
   } catch (_) {}
 
   try { await refreshEpisodes(); } catch (_) {}
