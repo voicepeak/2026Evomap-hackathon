@@ -7,9 +7,10 @@ ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
 SITE="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-if [ -n "$(git status --porcelain)" ]; then
-  echo "⚠️  工作区有未提交的改动，先提交再发布："
-  git status --short | head -10
+DIRTY="$(git status --porcelain -- "$SITE")"
+if [ -n "$DIRTY" ]; then
+  echo "⚠️  site/ 有未提交的改动，先提交再发布（发布的是已提交版本）："
+  echo "$DIRTY" | head -10
   exit 1
 fi
 
