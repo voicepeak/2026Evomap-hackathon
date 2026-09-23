@@ -25,8 +25,10 @@ git add -A
 git -c user.name="$(git -C "$ROOT" config user.name)" \
     -c user.email="$(git -C "$ROOT" config user.email)" \
     commit -qm "publish site $(date '+%Y-%m-%d %H:%M')"
-echo "→ 推送到 origin/gh-pages"
-git push -f "$ROOT" HEAD:refs/heads/gh-pages
+REMOTE_URL="$(git -C "$ROOT" remote get-url origin)"
+git remote add origin "$REMOTE_URL"
+echo "→ 推送到 origin/gh-pages（$REMOTE_URL）"
+git push -f origin HEAD:refs/heads/gh-pages
 
 echo ""
 echo "✅ 已发布到 gh-pages 分支。若还没开 Pages："
