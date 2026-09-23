@@ -1,0 +1,3 @@
+{"episode_index": 1, "task_id": "grasp-and-place", "length": 3291, "duration_s": 35.727, "success": false, "grade": "F", "score": 80.9, "data_file": "data/chunk-000/episode_000001.parquet", "video_file": null}
+{"episode_index": 2, "task_id": "grasp-and-place", "length": 1077, "duration_s": 11.923, "success": false, "grade": "F", "score": 83.0, "data_file": "data/chunk-000/episode_000002.parquet", "video_file": null}
+{"episode_index": 3, "task_id": "grasp-and-place", "length": 9777, "duration_s": 105.88, "success": true, "grade": "B", "score": 79.6, "data_file": "data/chunk-000/episode_000003.parquet", "video_file": null}

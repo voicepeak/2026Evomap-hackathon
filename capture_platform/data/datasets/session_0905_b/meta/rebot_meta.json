@@ -1,0 +1,193 @@
+{
+  "schema_version": "rebot-dataset/0.1",
+  "profile": {
+    "name": "reBot Arm B601-RS",
+    "arm_model": "B601-RS",
+    "dof": 6,
+    "motors": 7,
+    "control_mode": "mit",
+    "fps": 100,
+    "can": {
+      "channel": "can0",
+      "bitrate": 1000000
+    },
+    "joints": [
+      {
+        "name": "shoulder_pan",
+        "motor_id": 1,
+        "model": "rs-06",
+        "limits_rad": [
+          -2.8,
+          2.8
+        ],
+        "kp": 50.0,
+        "kd": 3.0
+      },
+      {
+        "name": "shoulder_lift",
+        "motor_id": 2,
+        "model": "rs-06",
+        "limits_rad": [
+          0.0,
+          3.14
+        ],
+        "kp": 150.0,
+        "kd": 10.0
+      },
+      {
+        "name": "elbow_flex",
+        "motor_id": 3,
+        "model": "rs-06",
+        "limits_rad": [
+          0.0,
+          3.14
+        ],
+        "kp": 150.0,
+        "kd": 10.0
+      },
+      {
+        "name": "wrist_flex",
+        "motor_id": 4,
+        "model": "rs-00",
+        "limits_rad": [
+          -1.57,
+          1.57
+        ],
+        "kp": 50.0,
+        "kd": 5.0
+      },
+      {
+        "name": "wrist_yaw",
+        "motor_id": 5,
+        "model": "rs-00",
+        "limits_rad": [
+          -1.57,
+          1.57
+        ],
+        "kp": 50.0,
+        "kd": 4.0
+      },
+      {
+        "name": "wrist_roll",
+        "motor_id": 6,
+        "model": "rs-00",
+        "limits_rad": [
+          -3.14,
+          3.14
+        ],
+        "kp": 50.0,
+        "kd": 4.0
+      }
+    ],
+    "gripper": {
+      "motor_id": 7,
+      "model": "rs-00",
+      "force_ratio": 0.07
+    },
+    "notes": [
+      "参数来源：Seeed 官方开源仓库（Gitee 镜像）+ B601-RS 真机实测会话（2026-09）",
+      "电机：J1-J3 = RobStride RS06（9:1，峰值 36 N·m）；J4-J6 + 夹爪 = RS00（10:1，峰值 14 N·m）",
+      "CAN：1 Mbps，电机 ID 1-7（J1-J6 + 夹爪）",
+      "关节限位来自 RS 版 URDF：J2/J3 零位即下限（0 rad）",
+      "direction 首次标定后由方向自检自动确定（当前占位为 1）",
+      "MIT 增益范围（RobStride 固件）：Kp 0-500，Kd 0-5"
+    ]
+  },
+  "auto_config": {
+    "robot_type": "rebot_b601_rs_follower",
+    "motor_can_ids": {
+      "shoulder_pan": 1,
+      "shoulder_lift": 2,
+      "elbow_flex": 3,
+      "wrist_flex": 4,
+      "wrist_yaw": 5,
+      "wrist_roll": 6
+    },
+    "motor_models": {
+      "shoulder_pan": "rs-06",
+      "shoulder_lift": "rs-06",
+      "elbow_flex": "rs-06",
+      "wrist_flex": "rs-00",
+      "wrist_yaw": "rs-00",
+      "wrist_roll": "rs-00"
+    },
+    "joint_directions": {
+      "shoulder_pan": 1,
+      "shoulder_lift": 1,
+      "elbow_flex": 1,
+      "wrist_flex": 1,
+      "wrist_yaw": 1,
+      "wrist_roll": 1
+    },
+    "joint_limits_rad": {
+      "shoulder_pan": [
+        -2.8,
+        2.8
+      ],
+      "shoulder_lift": [
+        0.0,
+        3.14
+      ],
+      "elbow_flex": [
+        0.0,
+        3.14
+      ],
+      "wrist_flex": [
+        -1.57,
+        1.57
+      ],
+      "wrist_yaw": [
+        -1.57,
+        1.57
+      ],
+      "wrist_roll": [
+        -3.14,
+        3.14
+      ]
+    },
+    "mit_kp": [
+      50.0,
+      150.0,
+      150.0,
+      50.0,
+      50.0,
+      50.0
+    ],
+    "mit_kd": [
+      3.0,
+      10.0,
+      10.0,
+      5.0,
+      4.0,
+      4.0
+    ],
+    "gripper": {
+      "can_id": 7,
+      "model": "rs-00",
+      "force_ratio": 0.07
+    },
+    "can": {
+      "channel": "can0",
+      "bitrate": 1000000
+    },
+    "control_mode": "mit"
+  },
+  "stats": {
+    "episodes": 1,
+    "frames": 9777,
+    "grades": {
+      "B": 1
+    }
+  },
+  "provenance": {
+    "device_serial": null,
+    "calib_hash": null,
+    "signature": null,
+    "signed_by": null
+  },
+  "license": {
+    "default_scope": "train",
+    "expiry": null,
+    "region": "CN"
+  }
+}

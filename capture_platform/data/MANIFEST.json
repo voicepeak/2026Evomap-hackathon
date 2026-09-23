@@ -1,0 +1,91 @@
+{
+  "generated_at": "2026-09-23T14:20:47",
+  "home": "/Users/Admin/Documents/Default Project/rebot_capture/data",
+  "raw_episodes": [
+    {
+      "file": "20260923_134109_ep000002.parquet",
+      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/episodes/20260923_134109_ep000002.parquet",
+      "size_bytes": 304497,
+      "sha256": "4d3e88f651ae3bba292c2f44f5c4a69ad13725a97686cc7924372eaead415634",
+      "frames": 5310,
+      "duration_s": 57.03,
+      "fps": 93.1,
+      "has_velocity": false,
+      "has_torque": false,
+      "success": true
+    },
+    {
+      "file": "20260923_135010_ep000002.parquet",
+      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/episodes/20260923_135010_ep000002.parquet",
+      "size_bytes": 328200,
+      "sha256": "2f27c57098dbf7cd932cc54be501d79deea17a00abcb9991a63758d9a93f643c",
+      "frames": 5510,
+      "duration_s": 59.37,
+      "fps": 92.8,
+      "has_velocity": false,
+      "has_torque": false,
+      "success": true
+    }
+  ],
+  "datasets": [
+    {
+      "name": "session_0905_all",
+      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/datasets/session_0905_all",
+      "episodes": 3,
+      "frames": 14145,
+      "features": [
+        "observation.state",
+        "action",
+        "timestamp"
+      ],
+      "videos": 0,
+      "size_mb": 0.92
+    },
+    {
+      "name": "session_0905_b",
+      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/datasets/session_0905_b",
+      "episodes": 1,
+      "frames": 9777,
+      "features": [
+        "observation.state",
+        "action",
+        "timestamp"
+      ],
+      "videos": 0,
+      "size_mb": 0.67
+    },
+    {
+      "name": "session_2",
+      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/datasets/session_2",
+      "episodes": 2,
+      "frames": 5803,
+      "features": [
+        "observation.state",
+        "action",
+        "timestamp"
+      ],
+      "videos": 0,
+      "size_mb": 0.32
+    },
+    {
+      "name": "session_3",
+      "path": "/Users/Admin/Documents/Default Project/rebot_capture/data/datasets/session_3",
+      "episodes": 1,
+      "frames": 5510,
+      "features": [
+        "observation.state",
+        "action",
+        "timestamp"
+      ],
+      "videos": 0,
+      "size_mb": 0.33
+    }
+  ],
+  "totals": {
+    "raw_episodes": 2,
+    "raw_frames": 10820,
+    "raw_minutes": 1.94,
+    "datasets": 4,
+    "with_video": 0
+  }
+}
