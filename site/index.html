@@ -7,6 +7,9 @@
 <meta name="description" content="一块数位板遥操 6 自由度机械臂：自动录制、质检、打包成可训练的 LeRobot 风格数据集。真机跑通，数据可查。" />
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="style.css" />
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js" } }
+</script>
 </head>
 <body>
 
@@ -130,21 +133,17 @@
 
   <div class="morph-wrap" id="morphWrap">
     <div class="morph-sticky">
-      <div class="morph-stage">
-        <svg class="morph-svg" viewBox="0 0 420 420" aria-hidden="true">
-          <defs>
-            <linearGradient id="gradMorph" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#3ac0ff" /><stop offset="100%" stop-color="#39d98a" />
-            </linearGradient>
-            <filter id="soft"><feGaussianBlur stdDeviation="16" /></filter>
-          </defs>
-          <circle class="morph-glow" cx="210" cy="210" r="120" fill="url(#gradMorph)" filter="url(#soft)" opacity=".22" />
-          <path class="morph-path" id="morphPath" fill="none" stroke="url(#gradMorph)" stroke-width="2.5" />
-          <path class="morph-fill" id="morphFill" fill="url(#gradMorph)" opacity=".09" />
-          <polyline class="morph-trail" id="morphTrail" fill="none" stroke="#e6ebf4" stroke-width="1.5" stroke-linejoin="round" />
-        </svg>
+      <div class="stage3d" id="stage3d">
+        <img class="stage3d-poster" id="stage3dPoster" src="assets/models/scene_poster.jpg"
+             alt="机械臂与数位板 3D 场景静态图" />
+        <canvas id="scene3d" aria-label="可拖拽旋转的 3D 场景"></canvas>
         <div class="morph-badge" id="morphBadge">① 输入 · 笔</div>
+        <p class="stage3d-hint">拖拽可旋转</p>
       </div>
+      <p class="stage3d-credit">
+        3D 模型（CC-BY 3.0，via Poly Pizza）：Robot Arm by Yali Izzo ·
+        Tablet / Pen by Poly by Google
+      </p>
     </div>
 
     <div class="morph-steps">

@@ -20,15 +20,41 @@ cd site && ../capture_platform/.venv/bin/python -m http.server 8899
 
 站点地址：`https://voicepeak.github.io/2026Evomap-hackathon/`
 
-## 五类交互（`app.js`）
+## 五类交互（`app.js` + `scene3d.js`）
 
 1. 悬停：卡片指针聚光 + 3D 倾斜 + 按钮磁吸
-2. 滚动 morph：SVG 形状在「笔 → 关节轨迹 → 数据集」三态间连续变形
+2. 滚动驱动 3D：**采集流程左侧的真实 3D 场景**（机械臂 + 数位板）——
+   滚动驱动转角与三态（输入/采集/产出），进入视口才懒加载 three.js
 3. 拖拽物理：Canvas 把 episode 拖进 `datasets/`（A/B 入库、F 被弹回）
 4. 滚动 3D 穿越：输入→采集→平台→商业 四层
-5. 指针视差：hero 分层 + 背景粒子
+5. 指针视差：hero 分层 + 背景粒子；3D 场景也可**拖拽旋转**（带惯性）
 
-所有动画都尊重 `prefers-reduced-motion`（系统「减弱动态效果」时静态呈现）。
+所有动画都尊重 `prefers-reduced-motion`（系统「减弱动态效果」时静态呈现；
+3D 场景显示 `assets/models/scene_poster.jpg` 静态图）。
+
+## 3D 模型（**现成模型，非自建**）
+
+| 用途 | 模型 | 作者 / 许可 | 来源 |
+|---|---|---|---|
+| 机械臂 | Robot Arm | **Yali Izzo** · CC-BY 3.0 | https://poly.pizza/m/1JbGi41I1l1 |
+| 数位板 | Tablet | **Poly by Google** · CC-BY 3.0 | https://poly.pizza/m/2LxocCCiDy- |
+| 笔 | Pen | **Poly by Google** · CC-BY 3.0 | https://poly.pizza/m/f3-XXzf_6Uv |
+
+> 署名已写在页面 3D 场景下方与页脚（CC-BY 的要求）。
+> **注意**：Poly Pizza 上没有"数位板（Wacom 类）"模型，最接近的是 iPad 形态的平板 + 手写笔，
+> 视觉上等价；若要更还原，可在上表替换 `assets/models/tablet.glb`（保持文件名即可）。
+> 备用机械臂（深色桌面臂，已下载过）：`Robot Arm by m m` https://poly.pizza/m/aL6uHwsMCVF
+
+three.js 已**本地化**（`vendor/three/`，r170，仅 build/three.module.js + GLTFLoader + BufferGeometryUtils），
+不依赖 CDN：断网也能跑。体积：three.js 1.3MB（懒加载）+ 模型 315KB + 静态图 43KB。
+
+重新生成静态兜底图：
+
+```bash
+cd site && ../capture_platform/.venv/bin/python -m http.server 8899 &
+# 浏览器打开 make_poster.html（它会把场景渲染成 1100×1100），截图后存为
+# assets/models/scene_poster.jpg
+```
 
 ## 素材来源（都可核验）
 

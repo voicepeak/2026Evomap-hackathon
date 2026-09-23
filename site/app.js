@@ -207,56 +207,53 @@
   }
 
   /* ══════════════════════════════════════════════════════════════
-     ② 滚动 morph：笔 → 轨迹 → 数据集
+     ② 滚动驱动 · 采集流程左侧的 3D 场景
+     现成模型（CC-BY，Poly Pizza）：机械臂 + 数位板；懒加载 three.js
      ══════════════════════════════════════════════════════════════ */
   const morphM = registerScroll("#morphWrap");
-  const morphPath = $("#morphPath"), morphFill = $("#morphFill"),
-        morphTrail = $("#morphTrail"), morphBadge = $("#morphBadge");
-  const morphSteps = $$(".morph-step");
-  const KEYS = [
-    { a1: 0.05, a2: 0.015, a3: 0.01, badge: "① 输入 · 笔" },        // 笔：接近圆
-    { a1: 0.30, a2: 0.17, a3: 0.05, badge: "② 采集 · 关节轨迹" },   // 轨迹：多瓣
-    { a1: 0.12, a2: 0.0, a3: 0.0, badge: "③ 产出 · 数据集" },       // 数据集：圆角方块
-  ];
-  let morphV = 0;
-  const N = 96, CX = 210, CY = 210, R = 132;
-  function shapePath(t) {           // t ∈ [0,2]：在两段之间插值
-    const i = Math.min(KEYS.length - 2, Math.floor(t));
-    const k = smooth(clamp(t - i));
-    const k0 = KEYS[i], k1 = KEYS[i + 1];
-    const a1 = lerp(k0.a1, k1.a1, k), a2 = lerp(k0.a2, k1.a2, k), a3 = lerp(k0.a3, k1.a3, k);
-    const pts = [];
-    for (let n = 0; n < N; n++) {
-      const th = (n / N) * Math.PI * 2;
-      const r = R * (1 + a1 * Math.cos(2 * th + 0.4) + a2 * Math.cos(3 * th - k * 1.2) + a3 * Math.cos(5 * th));
-      pts.push([CX + Math.cos(th) * r, CY + Math.sin(th) * r]);
-    }
-    const d = "M" + pts.map((p) => p[0].toFixed(1) + "," + p[1].toFixed(1)).join("L") + "Z";
-    return { d, pts };
+  const stage = $("#stage3d");
+  const badge3d = $("#morphBadge");
+  const poster3d = $("#stage3dPoster");
+  const BADGES = ["① 输入 · 笔", "② 采集 · 关节轨迹", "③ 产出 · 数据集"];
+  const morphSteps2 = $$(".morph-step");
+  let scene3d = null, sceneLoading = false, sceneStep = -1;
+
+  function applyStep(i) {
+    if (i === sceneStep) return;
+    sceneStep = i;
+    if (badge3d) badge3d.textContent = BADGES[i] || "";
+    morphSteps2.forEach((s, k) => s.classList.toggle("active", k === i));
   }
+  applyStep(0);
+
+  if (stage && !reduce) {
+    const io3d = new IntersectionObserver(async (entries) => {
+      if (!entries.some((e) => e.isIntersecting) || sceneLoading || scene3d) return;
+      sceneLoading = true;
+      try {
+        const mod = await import("./scene3d.js");      // 进入视口才下载 three.js（1.3MB）
+        scene3d = await mod.initScene3D({
+          canvas: $("#scene3d"), badge: badge3d, poster: poster3d, onStep: applyStep,
+        });
+        if (stage) stage.dataset.ready = "1";
+      } catch (err) {
+        console.warn("[3D] 场景初始化失败，保留静态图：", err);
+        sceneLoading = false;
+      }
+    }, { rootMargin: "220px" });
+    io3d.observe(stage);
+  } else if (stage) {
+    applyStep(2);                    // 减弱动态效果：直接展示终态
+  }
+
   tasks.push(() => {
-    if (!morphM || !morphPath) return;
+    if (!morphM) return;
     const p = reduce ? 1 : progress(morphM);
-    morphV = lerp(morphV, p * (KEYS.length - 1), 0.14);
-    const { d, pts } = shapePath(clamp(morphV, 0, KEYS.length - 1.0001));
-    morphPath.setAttribute("d", d);
-    if (morphFill) morphFill.setAttribute("d", d);
-    if (morphTrail) {
-      // 一条"笔迹"：同形状缩一圈再转 14°，随进度画出来
-      const trail = pts.filter((_, idx) => idx % 2 === 0).map(([x, y]) => {
-        const dx = x - CX, dy = y - CY, c = Math.cos(0.24), s = Math.sin(0.24);
-        return [(CX + (dx * c - dy * s) * 0.78).toFixed(1), (CY + (dx * s + dy * c) * 0.78).toFixed(1)];
-      });
-      morphTrail.setAttribute("points", trail.map((p2) => p2.join(",")).join(" "));
-      const len = 900;
-      morphTrail.style.strokeDasharray = len;
-      morphTrail.style.strokeDashoffset = (len * (1 - clamp(morphV - 0.35))).toFixed(1);
-      morphTrail.style.opacity = clamp(morphV * 1.4) * 0.9;
-    }
-    const idx = Math.round(clamp(morphV, 0, KEYS.length - 1));
-    if (morphBadge && morphBadge.textContent !== KEYS[idx].badge) morphBadge.textContent = KEYS[idx].badge;
-    morphSteps.forEach((s, i) => s.classList.toggle("active", i === idx));
+    scene3d?.setProgress(p);
   });
+
+  /* 旧的 SVG morph 参数保留：shapePath 仍被下面这段用于……（已由 3D 取代）
+     —— 保留函数定义以免其它处引用报错，实际不再绘制。 */
 
   /* ══════════════════════════════════════════════════════════════
      ④ 滚动 3D 穿越四层

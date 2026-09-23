@@ -155,8 +155,21 @@ code { background: #1a2130; padding: .12em .42em; border-radius: 6px; color: #cf
 /* ── 滚动 morph ───────────────────────────────────────────────── */
 .section-morph { padding-bottom: 0; }
 .morph-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(20px, 4vw, 56px); position: relative; }
-.morph-sticky { position: sticky; top: 16vh; height: 60vh; display: flex; align-items: center; justify-content: center; }
+.morph-sticky { position: sticky; top: 16vh; height: 60vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; }
 .morph-stage { position: relative; width: min(420px, 80%); aspect-ratio: 1; }
+
+/* 3D 舞台（现成模型：机械臂 + 数位板） */
+.stage3d { position: relative; width: min(560px, 94%); aspect-ratio: 1 / 1; }
+.stage3d canvas, .stage3d-poster { position: absolute; inset: 0; width: 100%; height: 100%;
+  border-radius: 16px; }
+.stage3d canvas { display: block; touch-action: none; }
+.stage3d-poster { object-fit: contain; background: radial-gradient(60% 60% at 50% 55%, #131a26, transparent 70%); }
+.stage3d-hint { position: absolute; right: 10px; top: 10px; margin: 0;
+  font-size: .72rem; color: var(--faint); border: 1px solid var(--line); border-radius: 999px;
+  padding: 3px 10px; background: rgba(10,13,19,.6); }
+.stage3d-credit { color: var(--faint); font-size: .68rem; text-align: center; max-width: 46ch;
+  line-height: 1.5; margin: 0; }
 .morph-svg { width: 100%; height: 100%; overflow: visible; }
 .morph-badge { position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
   font-family: var(--mono); font-size: .78rem; color: var(--text); background: rgba(18,23,34,.9);
