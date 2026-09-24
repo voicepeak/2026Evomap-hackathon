@@ -296,7 +296,9 @@ class PanelView(QWidget):
         def key_of(c: dict):
             return c.get("index") if c.get("index") is not None else c.get("url")
 
-        cur = next((c for c in opened if key_of(c) == selected), None)
+        # 看的是"面板大画面那一路"（默认 = 机械臂上的相机），不是服务端最后打开的那路
+        want_key = getattr(self.mw, "_preview_key", None) or selected
+        cur = next((c for c in opened if key_of(c) == want_key), None)
         if cur:
             name = cur.get("alias") or cur.get("name") or "cam"
             self.cam_status.setText(

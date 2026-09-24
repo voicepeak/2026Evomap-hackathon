@@ -1,5 +1,6 @@
 #!/bin/zsh
-# 在 Terminal 运行：停止本工作区旧服务，启动新版，恢复 camera1 腕部画面。
+# 在 Terminal 运行：停止本工作区旧服务，启动新版，恢复腕部画面（相机索引可改，
+# 默认 REBOT_ARM_CAMERA=0 = 机械臂上的那路相机）。
 set -eu
 CAPTURE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$CAPTURE_DIR"
@@ -56,7 +57,8 @@ for _ in range(120):
         time.sleep(.5)
 else:
     raise SystemExit('服务未就绪，未恢复相机。')
-for index, name in [(2, 'operator'), (1, 'wrist')]:
+for index, name in [(int(os.environ.get('REBOT_ARM_CAMERA', 0)), 'wrist'),
+                        (1, 'scene')]:
     for path, body in [('/api/camera/open', {'index': index}),
                        ('/api/camera/alias', {'index': index, 'name': name})]:
         req = urllib.request.Request(base + path, data=json.dumps(body).encode(),

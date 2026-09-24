@@ -16,4 +16,5 @@ exec caffeinate -d -i "$CAPTURE_DIR/.venv/bin/rebot-capture" gui \
   --backend "$BACKEND" \
   --arm-repo "$ARM_REPO" \
   --gesture-camera 2 \
+  --arm-camera "${REBOT_ARM_CAMERA:-0}" \
   --service-log /tmp/rebot_gui_serve.log

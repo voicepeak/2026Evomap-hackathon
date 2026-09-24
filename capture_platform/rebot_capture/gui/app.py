@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel,
                                QVBoxLayout, QWidget)
 
 from . import theme
+from .cams import pick_arm_camera, pick_other_camera, pick_preview_camera
 from .client import ApiError, ServiceClient
 from .hud import TeleopView
 from .panel import PanelView
@@ -86,7 +87,7 @@ def ensure_service(url: str, *, autostart: bool, backend: str = "rebot",
 # 主窗口
 # ──────────────────────────────────────────────────────────────────────── #
 class MainWindow(QMainWindow):
-    def __init__(self, url: str = DEFAULT_URL, *, start_panel: bool = False):
+    def __init__(self, url: str = DEFAULT_URL, *, start_panel: bool = False, arm_camera: int = 0):
         super().__init__()
         self.setWindowTitle("reBot 采集端")
         self.resize(1440, 900)
@@ -103,7 +104,11 @@ class MainWindow(QMainWindow):
         self._streams: dict[Any, int] = {}      # 相机 key → 需要的最大宽度
         self._arm_key: Any = None
         self._pc_key: Any = None
-        self._selected_key: Any = None
+        self._preview_key: Any = None           # 面板大画面正在显示哪一路
+        self._selected_key: Any = None          # 服务端"当前选中"（兼容保留）
+        self._arm_camera = int(arm_camera)      # 机械臂上的相机索引（默认 0）
+        self._cam_autotried = False
+        self._cam_aliased: Any = "?"            # 给机械臂相机命名 wrist 只做一次
         self._tile_sub: dict[Any, str] = {}
         self._cam_sig: tuple | None = None
         self._auto_fs = True
@@ -297,27 +302,25 @@ class MainWindow(QMainWindow):
 
     def _sync_streams(self, live: dict, status: dict) -> None:
         cam = live.get("camera") or status.get("camera") or {}
-        opened = [c for c in (cam.get("cameras") or []) if c.get("opened")]
+        cameras = cam.get("cameras") or []
+        opened = [c for c in cameras if c.get("opened")]
         sig = tuple(sorted((self._cam_key(c), c.get("opened"), c.get("alias"), c.get("recording"))
-                           for c in (cam.get("cameras") or [])))
+                           for c in cameras))
         if sig != self._cam_sig:
             self._cam_sig = sig
             self.panel._update_camera(cam)
 
-        arm = next((c for c in opened if str(c.get("alias", "")).startswith("wrist")), None)
-        if arm is None:
-            arm = next((c for c in opened if c.get("index") == 1), None)
+        # 机械臂上的相机（腕部）：优先配置索引（默认 0 —— 现场实测就是这一路），
+        # 再退到别名 wrist*，最后才是老默认 index 1。
+        arm = pick_arm_camera(cameras, self._arm_camera)
         self._arm_key = self._cam_key(arm) if arm else None
         if arm is None:
             self.teleop.tile_arm.clear("未连接")
+        else:
+            self._maybe_autosetup_arm_cam(arm)
 
         g = live.get("gesture") or {}
-        pc_index = g.get("camera")
-        pc = None
-        if pc_index is not None:
-            pc = next((c for c in opened if c.get("index") == pc_index), None)
-        if pc is None:
-            pc = next((c for c in opened if self._cam_key(c) != self._arm_key), None)
+        pc = pick_other_camera(cameras, self._arm_key, g.get("camera"))
         self._pc_key = self._cam_key(pc) if pc else None
         if pc is None:
             self.teleop.tile_pc.clear("未连接")
@@ -330,9 +333,11 @@ class MainWindow(QMainWindow):
                     f"{c.get('alias') or c.get('name') or 'cam'} · {c.get('fps_actual')}fps"
                 )
 
-        selected = cam.get("selected")
-        sel = next((c for c in opened if self._cam_key(c) == selected), None)
-        self._selected_key = self._cam_key(sel) if sel else None
+        # 面板大画面：用户点过的相机优先，否则固定给"机械臂上的相机"
+        prev = pick_preview_camera(cameras, self._preview_key, self._arm_key)
+        self._preview_key = self._cam_key(prev) if prev else self._preview_key
+        if prev is None and not opened:
+            self._preview_key = None
 
         # 组装每路需要的流：key → (path, width)
         # 说明：URL 相机无法按索引寻址，只能通过"当前选中"通道取流。
@@ -354,7 +359,9 @@ class MainWindow(QMainWindow):
 
         add(arm, 320)
         add(pc, 320)
-        add(sel, 640)
+        add(prev, 640)
+
+        self._maybe_open_arm_camera(cameras)
 
         for key, (path, width) in want.items():
             if key not in self._streams or self._streams[key] < width:
@@ -366,13 +373,41 @@ class MainWindow(QMainWindow):
                 self.client.close_stream(key)
                 self._streams.pop(key, None)
 
+    def _maybe_open_arm_camera(self, cameras: list[dict]) -> None:
+        """启动后自动打开机械臂上的相机（只试一次；失败就在面板上手动开）。"""
+        if self._cam_autotried or not cameras:
+            return
+        self._cam_autotried = True
+        if any(c.get("index") == self._arm_camera and c.get("opened") for c in cameras):
+            return
+        self.set_status(f"自动打开机械臂相机 cam{self._arm_camera}…")
+        self.do_open_camera(self._arm_camera, preview=True)
+
+    def _maybe_autosetup_arm_cam(self, arm: dict) -> None:
+        """机械臂相机没有有意义的名字时，自动命名 wrist（数据集/回放都用它）。"""
+        key = self._cam_key(arm)
+        if self._cam_aliased is not None and self._cam_aliased == key:
+            return
+        alias = str(arm.get("alias") or "")
+        name = str(arm.get("name") or "")
+        if alias.startswith("wrist"):
+            self._cam_aliased = key
+            return
+        if alias and not alias.startswith("cam") and name != f"cam{arm.get('index')}":
+            self._cam_aliased = key
+            return
+        self._cam_aliased = key
+        body = {"index": key} if isinstance(key, int) else {"url": key}
+        body["name"] = "wrist"
+        self._call("/api/camera/alias", body, "机械臂相机已命名 wrist")
+
     def _on_frame(self, key: Any, image) -> None:
         sub = (self._tile_sub or {}).get(key, "")
         if key is not None and key == self._arm_key:
             self.teleop.tile_arm.set_frame(image, sub)
         if key is not None and key == self._pc_key:
             self.teleop.tile_pc.set_frame(image, sub)
-        if key is not None and key == self._selected_key:
+        if key is not None and key == self._preview_key:
             self.panel.cam_preview.set_frame(image)
 
     # ================================================================== #
@@ -618,9 +653,11 @@ class MainWindow(QMainWindow):
         self.panel.cam_preview.set_hint("探测中…")
         self._call("/api/camera/probe", {}, "相机探测")
 
-    def do_open_camera(self, key: Any) -> None:
+    def do_open_camera(self, key: Any, preview: bool = True) -> None:
         body = {"index": key} if isinstance(key, int) else {"url": key}
         label = f"cam{key}" if isinstance(key, int) else "桥接相机"
+        if preview:
+            self._preview_key = key          # 点/自动开的这一路就是面板要看的
         self._call("/api/camera/open", body, f"打开 {label}")
 
     def do_close_camera(self) -> None:
@@ -630,9 +667,9 @@ class MainWindow(QMainWindow):
         if not name.strip():
             self.set_status("请先填写名字（wrist / scene）", error=True)
             return
-        key = self._selected_key
+        key = self._preview_key or self._selected_key     # 命名"正在看的那一路"
         if key is None:
-            self.set_status("还没有选中的相机", error=True)
+            self.set_status("还没有选中/预览的相机", error=True)
             return
         body = {"index": key} if isinstance(key, int) else {"url": key}
         body["name"] = name.strip()
@@ -772,7 +809,7 @@ def run_gui(url: str = DEFAULT_URL, *, autostart: bool = True, windowed: bool = 
             backend: str = "rebot", arm_repo: str | None = None,
             gesture_camera: int = 2, service_log: str = "/tmp/rebot_gui_serve.log",
             start_panel: bool = False, debug_events: bool = False,
-            cover: bool = False) -> int:
+            cover: bool = False, arm_camera: int = 0) -> int:
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("reBot 采集端")
     app.setStyleSheet(theme.QSS)
@@ -793,7 +830,7 @@ def run_gui(url: str = DEFAULT_URL, *, autostart: bool = True, windowed: bool = 
     ok, detail, service_proc = ensure_service(url, autostart=autostart, backend=backend,
                                               arm_repo=arm_repo, gesture_camera=gesture_camera,
                                               log_path=service_log)
-    win = MainWindow(url, start_panel=start_panel)
+    win = MainWindow(url, start_panel=start_panel, arm_camera=arm_camera)
     win._service_proc = service_proc
     if not ok:
         win.set_status(detail.splitlines()[0] if detail else "服务未连接", error=True)

@@ -87,6 +87,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="自动拉起服务时用的后端（默认真机）")
     p_gui.add_argument("--arm-repo", default=None, help="自动拉起服务时的 arm_control 路径")
     p_gui.add_argument("--gesture-camera", type=int, default=2, help="自动拉起服务时的手势相机索引")
+    p_gui.add_argument("--arm-camera", type=int, default=0,
+                       help="机械臂上的相机索引（默认 0；面板/小窗固定显示这一路）")
     p_gui.add_argument("--service-log", default="/tmp/rebot_gui_serve.log", help="自动拉起服务的日志路径")
     p_gui.add_argument("--panel", action="store_true", help="启动即显示控制面板（用于先配相机）")
     p_gui.add_argument("--cover", action="store_true",
@@ -143,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
             start_panel=args.panel,
             debug_events=args.debug_events,
             cover=args.cover,
+            arm_camera=args.arm_camera,
         )
 
     if args.cmd == "selftest":
