@@ -14,10 +14,12 @@
     "model": "rs-00",
     "force_ratio": 0.07,
     "travel_m": 0.0715,
-    "lo_deg": 3.0,
-    "hi_deg": 328.0,
+    "lo_deg": -331.4,
+    "hi_deg": -18.1,
     "tau_limit": 2.0,
-    "rate": 1.2
+    "rate": 1.2,
+    "direction": -1,
+    "pen_range_px": 500.0
   },
   "joints": [
     {
@@ -82,8 +84,9 @@
     "关节限位来自 RS 版 URDF：J2/J3 零位即下限（0 rad）",
     "direction 首次标定后由方向自检自动确定（当前占位为 1）",
     "MIT 增益范围（RobStride 固件）：Kp 0-500，Kd 0-5",
-    "夹爪行程：机械端 −11.9° / +335.4°；lo_deg/hi_deg = 程序可用范围（留余量，可在此调）",
-    "夹爪方向：direction=+1 = 角度增大是张开（软件约定）；−1 = 反过来（现场某台实测「角度增大是夹紧」）",
-    "夹爪零点：0° 应是爪片完全合上；要重设/复测用 arm_control/tools/grip_zero.py（只动夹爪）"
+    "夹爪行程：机械端 −11.9° / +335.4°（这是**电机原始坐标**）；lo_deg/hi_deg 是程序坐标，程序坐标 = direction × 电机坐标",
+    "夹爪方向：direction=+1 = 角度增大是张开（软件约定）；−1 = 反过来（现场某台实测「角度增大是夹紧」→ 已改成 −1）",
+    "夹爪零点：0° 应是爪片完全合上；要重设/复测用 arm_control/tools/grip_zero.py（只动夹爪，可 --write-config 自动回写本文件的 direction/lo_deg/hi_deg）",
+    "夹爪两端余量：闭合端 4°、开口端 30°（开口端故意留大，避免「经常卡在外面」）；pen_range_px = 笔控灵敏度（笔走这么多像素 = 全行程）"
   ]
 }

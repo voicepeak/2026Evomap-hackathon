@@ -34,10 +34,11 @@ class RebotCoreMapper:
         self.model = self.repo.load_robot_model()
         self.data = self.model.createData()
         self.fid = self.repo.get_end_effector_frame_id(self.model)
-        # 夹爪可用行程/力矩/速度从机型配置来（见 configs/rebot_b601_rs.json 的 gripper）
+        # 夹爪可用行程/力矩/速度/方向/笔灵敏度从机型配置来（见 configs/rebot_b601_rs.json 的 gripper）
         gp = profile.gripper
         args = CoreArgs(grip_lo=float(gp.lo_deg), grip_hi=float(gp.hi_deg),
-                        grip_tau_limit=float(gp.tau_limit), grip_rate=float(gp.rate))
+                        grip_tau_limit=float(gp.tau_limit), grip_rate=float(gp.rate),
+                        grip_pen_range=float(getattr(gp, "pen_range_px", 500.0)))
         self.core = TeleopCore(self.model, self.data, self.fid, profile.kp_array(), profile.kd_array(), args)
 
         self._last_t = time.monotonic()

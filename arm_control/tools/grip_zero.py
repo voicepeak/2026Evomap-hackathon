@@ -88,6 +88,9 @@ def main() -> int:
     ap.add_argument("--kd", type=float, default=2.0)
     ap.add_argument("--set-zero", action="store_true", help="到端后把当前位置设为 0° 并保存参数")
     ap.add_argument("--span", action="store_true", help="设完零点再往反方向走到另一端，量整程")
+    ap.add_argument("--lo-margin", type=float, default=4.0, help="闭合端余量（度）")
+    ap.add_argument("--hi-margin", type=float, default=30.0,
+                    help="开口端余量（度）：留大一些，避免经常卡在外面")
     ap.add_argument("--write-config", nargs="?", const="auto", default=None,
                     help="把建议的 direction/lo_deg/hi_deg 写进机型配置（默认 "
                          "<工作区>/capture_platform/configs/rebot_b601_rs.json，先备份 .bak）")
@@ -211,12 +214,13 @@ def main() -> int:
             # 若"合"的方向是 +1（角度增大），就要把配置里的 direction 反过来。
             direction = -1 if args.dir > 0 else 1
             span_deg = math.degrees(abs(e2 - s2)) if (args.span and hit2) else None
-            lo = 3.0
-            hi = max(lo + 10.0, (span_deg - 5.0)) if span_deg else None
+            lo = float(args.lo_margin)
+            hi = max(lo + 10.0, (span_deg - float(args.hi_margin))) if span_deg else None
             print("   → capture_platform/configs/rebot_b601_rs.json 的 gripper 建议：", flush=True)
             print(f'     "direction": {direction},', flush=True)
             if hi is not None:
-                print(f'     "lo_deg": {lo:.0f},  "hi_deg": {hi:.0f}   （0° = 合到位；留 3°/5° 余量）',
+                print(f'     "lo_deg": {lo:.0f},  "hi_deg": {hi:.0f}   '
+                      f'（0° = 合到位；闭合端留 {lo:.0f}°、开口端留 {args.hi_margin:.0f}° 余量）',
                       flush=True)
             else:
                 print('     "lo_deg" / "hi_deg"：再加 --span 量整程后给', flush=True)

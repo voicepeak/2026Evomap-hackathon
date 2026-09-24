@@ -16,11 +16,13 @@
    P/I 补摩擦与负载造成的稳态速度差，D 抑制过冲；输出修正量限幅 + 抗饱和。
 3. **姿态模式速度档**：角速度上限随 慢/中/快 缩放（原来三档完全一样），
    并把笔的死区/曲线调得更跟手（`DEAD_PX` 3px、`EXPO` 1.2）。
-4. **夹爪**（两个平台扩展，参数见 `CoreArgs.grip_*` 与机型配置 `gripper`）：
-   - 笔左右拉动是**位置式**：右划 = 张开、左划 = 闭合，拖 200px 走完全行程，
-     松笔停在原处（不像关节那样"按住一直走"）；
+4. **夹爪**（三个平台扩展，参数见 `CoreArgs.grip_*` 与机型配置 `gripper`）：
+   - 笔左右拉动是**增量跟手**：笔移多少、开度按比例动多少（`grip_pen_range` 像素 = 全行程），
+     笔停/抬笔**立刻停**（不会"笔结束了还在动"）；按住 Q/A 仍是"按住一直走"的兜底；
    - 力控/堵转保护：下发值夹在"实测 ± τ上限/kp"内（力矩有上限），推着不动
-     0.15~0.6s 就停手 + 半力保持，同方向不再顶（反向/换手势继续）。
+     0.15~0.6s 就停手 + 半力保持，同方向不再顶（反向/换手势继续）；
+   - 方向/行程可配：`gripper.direction`（+1 = 角度增大是张开；−1 = 反过来）、
+     `lo_deg`/`hi_deg` 两端都留余量（开口端默认留得更多，避免"卡在外面"）。
 
 `spatial_teleop.py` 保持不动；本文件供平台 / 无头脚本复用。
 
@@ -88,8 +90,9 @@ PRESET_FILE = Path(__file__).resolve().parent / "config" / "poses.json"
 # ── 平台扩展：电机直控（mode="joint"）的笔轴映射 ──────────────────────────────
 # axis="y"：笔上下象限（俯仰类电机）；axis="x"：笔左右象限（回转/偏航类电机）。
 # sign：笔向上（y）/向右（x）为正时，对应的关节正方向；个别方向反了改这里即可。
-# 夹爪（6）用**左右拉动**：笔右划 = 张开、左划 = 闭合，拖动量直接对应开度
-# （位置式，不是"按住一直走"；松笔停在原处），见 step() 里的 q_grip_direct。
+# 夹爪（6）用**左右拉动**：笔右划 = 张开、左划 = 闭合。
+# 与关节不同，夹爪是"增量跟手"：笔动多少、开度按比例动多少，笔停/抬笔就停
+# （见 step() 夹爪段的 grip_pen_range / grip_track_rate；不会按住一直走）。
 JOINT_PEN_MAP: dict[int, tuple[str, float]] = {
     0: ("x", +1.0),   # J1 肩部水平回转
     1: ("y", +1.0),   # J2 肩部俯仰
@@ -260,6 +263,10 @@ class CoreArgs:
     grip_stall_s: float = 0.6                   # 想走但实测不动超过这么久 → 认定被挡住（无力矩信号时的兜底）
     grip_stall_fast_s: float = 0.15             # 力矩已超限时的快速判定（有反馈时反应更快）
     grip_hold_frac: float = 0.5                 # 停手后保留的夹持力比例（0.5 → 约 0.75N·m，能抱住东西）
+    # ── 夹爪笔控（左右拉动）：增量跟手，笔停夹爪停 ──
+    grip_pen_range: float = 500.0               # 笔走这么多像素 = 走完整个行程（越小越灵敏）
+    grip_pen_dead: float = 2.5                  # 像素死区：累积超过它才动（滤掉笔的抖动）
+    grip_track_rate: float = 3.0                # 拖动时目标最大变化速度（rad/s，防"甩笔"一下到底）
     # ── 速度指令整形（★ 平台新增）：只削"起停/反向的瞬间跳变"，不降额定速度 ──
     v_acc: float = 1.2         # 末端加速度上限（m/s²）
     v_tau: float = 0.03        # 末端速度一阶低通（s）
@@ -371,7 +378,10 @@ class TeleopCore:
         self._grip_block_dir = 0.0       # 挡住的方向（+1 = 往大开，−1 = 往闭合）
         self._grip_stall_t: float | None = None
         self._grip_stall_pos = 0.0
-        self._grip_pen_start = 0.0       # ★ 笔按下的那一刻的开度（左右拉动 = 位置式的起点）
+        self._grip_pen_start = 0.0       # ★ 笔按下的那一刻的开度（位置式的起点，兼容保留）
+        self._grip_pen_last_x = 0.0      # 上一帧的笔 x（增量跟手）
+        self._grip_pen_acc = 0.0         # 未超过死区的累计像素
+        self._grip_pen_active = False    # 这一笔是否正在拖夹爪（抬笔要立刻停）
         self._grip_ext_target: float | None = None   # 外部（手势）行程目标 0=合 1=开
 
         self._twist_prev = 0.0
@@ -517,8 +527,12 @@ class TeleopCore:
         self.anchor = (float(x), float(y))
         self.pressed = True
         self.pen_t = time.perf_counter()
-        # 夹爪是"位置式拉动"：记下按下时的开度，之后拖动量直接对应开度变化
+        # 夹爪是"增量跟手"：记下起笔位置，之后按每帧位移累计开度
         self._grip_pen_start = float(self.grip_cmd)
+        self._grip_pen_last_x = float(x)
+        self._grip_pen_acc = 0.0
+        self._grip_pen_active = False
+        self.grip_clear_block()          # 重新落笔 = 允许再试一次
 
     def pen_move(self, x: float, y: float) -> None:
         self.pen = (float(x), float(y))
@@ -562,6 +576,8 @@ class TeleopCore:
         self.anchor = self.pen
         self._reset_shapers()      # 换模式 = 换指令源：上一段速度不许漏到新模式
         self._grip_pen_start = float(self.grip_cmd)   # 拉动起点跟着重锚
+        self._grip_pen_last_x = float(self.pen[0])
+        self._grip_pen_acc = 0.0
         if mode == "joint":
             self.grip_clear_block()   # 显式选中夹爪 = 允许再推一次
             self.msg = self.motor_msg()
@@ -614,6 +630,8 @@ class TeleopCore:
         # 与上游按键 R 一致：重设笔锚点，避免重新对齐后按旧位移继续推动机械臂。
         self.anchor = self.pen
         self.align_req = True
+        self._grip_pen_last_x = float(self.pen[0])
+        self._grip_pen_acc = 0.0
         self.grip_clear_block()
 
     def record_preset(self, i: int) -> dict:
@@ -757,24 +775,18 @@ class TeleopCore:
         self._was_float = False
 
         # ── 0a2. 电机直控（平台扩展）：笔按电机功能象限驱动所选关节 ──
-        # 夹爪（6）例外：左右拉动是**位置式**——拖动量直接对应开度（拖滑块），见 q_grip_direct。
+        # 夹爪（6）例外：笔左右是**增量跟手**（笔动多少、开度按比例动多少；抬笔立刻停），
+        # 逻辑写在下面的夹爪段里（要按帧累计位移），这里不产生"位置目标"。
         j_direct = 0.0
-        q_grip_direct: float | None = None
         if (mode == "joint" and pressed and not freeze
                 and replay is None and self.selftest_cmd is None
-                and int(self.j_sel) in JOINT_PEN_MAP):
+                and int(self.j_sel) in JOINT_PEN_MAP and int(self.j_sel) != 6):
             axis, sign = JOINT_PEN_MAP[int(self.j_sel)]
             dx = pen[0] - anchor[0]
             dy = pen[1] - anchor[1]
             disp = (-dy if axis == "y" else dx) * sign
-            if int(self.j_sel) == 6:
-                # 夹爪：笔左/右拉满（=pen_range）对应全行程；松笔停住，不"按住一直走"
-                g_lo, g_hi = self.grip_lim
-                f = float(np.clip(disp / max(float(self.args.pen_range), 1.0), -1.0, 1.0))
-                q_grip_direct = float(np.clip(self._grip_pen_start + f * (g_hi - g_lo), g_lo, g_hi))
-            else:
-                j_direct = vel_from_px(disp, JOINT_PEN_RATE, self.args.pen_range, self.args.dead,
-                                       self.args.expo)
+            j_direct = vel_from_px(disp, JOINT_PEN_RATE, self.args.pen_range, self.args.dead,
+                                   self.args.expo)
 
         # ── 0b. 关节直控：参考跟随，避免笛卡尔任务拉扯 ──
         j_cmd = 0.0 if freeze else self.j_req
@@ -954,16 +966,46 @@ class TeleopCore:
             g_lo, g_hi = self.grip_lim
             err_max = self.grip_err_max()
             rate = float(self.args.grip_rate)
-            if q_grip_direct is not None:
-                # 笔左右拉动（位置式）：直接拖开度；被挡住的同方向不再顶
-                d = math.copysign(1.0, q_grip_direct - self.grip_pos)
-                if not self.grip_blocked_towards(d):
-                    self.grip_cmd = float(np.clip(q_grip_direct, g_lo, g_hi))
-            elif abs(j_ref) > 1e-6 and j_sel == 6:
+            # 笔在拖夹爪？（电机直控 + 选中夹爪 + 笔按下；回放/自检/冻结时不算）
+            pen_drive = bool(mode == "joint" and j_sel == 6 and pressed and not freeze
+                             and replay is None and self.selftest_cmd is None)
+            if pen_drive:
+                # 增量跟手：这一帧笔动了多少像素 → 开度按比例动多少
+                # （不像关节那样"按住一直走"；笔停就不动，抬笔立刻停）
+                dx_px = float(pen[0]) - float(self._grip_pen_last_x)
+                self._grip_pen_last_x = float(pen[0])
+                self._grip_pen_acc += dx_px
+                if abs(self._grip_pen_acc) >= float(self.args.grip_pen_dead):
+                    full = max(float(self.args.grip_pen_range), 1.0)
+                    want_step = (self._grip_pen_acc / full) * (g_hi - g_lo)
+                    lim = float(self.args.grip_track_rate) * dt     # 防"甩笔"一下到底
+                    step = float(np.clip(want_step, -lim, lim))
+                    d = math.copysign(1.0, step)
+                    if self.grip_blocked_towards(d):
+                        self._grip_pen_acc = 0.0                     # 这个方向被挡住：别再累计
+                    else:
+                        new = float(np.clip(self.grip_cmd + step, g_lo, g_hi))
+                        if abs((new - self.grip_cmd) - step) > 1e-12:
+                            self._grip_pen_acc = 0.0                 # 到端了：余量丢掉
+                        else:
+                            # 被"最大速度"截掉的部分留回累计器，下一帧继续走（不丢行程）
+                            self._grip_pen_acc = (want_step - step) / (g_hi - g_lo) * full
+                        self.grip_cmd = new
+                        self._grip_pen_start = float(self.grip_cmd)
+                self._grip_pen_active = True
+            else:
+                # 抬笔 / 笔超时 / 换模式：夹爪立刻停在当前开度（不追剩余的行程）
+                self._grip_pen_last_x = float(pen[0]) if pressed else self._grip_pen_last_x
+                self._grip_pen_acc = 0.0
+                if self._grip_pen_active:
+                    self.grip_cmd = float(self.grip_pos)
+                    self.grip_send = float(self.grip_pos)
+                    self._grip_pen_active = False
                 # 键盘兜底（Q/A 按住）：按速度走
-                d = math.copysign(1.0, j_ref)
-                if not self.grip_blocked_towards(d):
-                    self.grip_cmd = float(np.clip(self.grip_cmd + d * rate * dt, g_lo, g_hi))
+                if abs(j_ref) > 1e-6 and j_sel == 6:
+                    d = math.copysign(1.0, j_ref)
+                    if not self.grip_blocked_towards(d):
+                        self.grip_cmd = float(np.clip(self.grip_cmd + d * rate * dt, g_lo, g_hi))
             step_g = rate * dt
             self.grip_send = float(np.clip(
                 self.grip_send + float(np.clip(self.grip_cmd - self.grip_send, -step_g, step_g)), g_lo, g_hi))

@@ -36,6 +36,7 @@ class GripperProfile:
     rate: float = 1.2        # 行程速度（rad/s，约 69°/s）
     direction: int = 1       # +1 = 软件正方向与电机一致（角度增大 = 张开）；
                              # −1 = 反过来（角度增大 = 夹紧，现场实测到的那台）
+    pen_range_px: float = 500.0   # 笔控夹爪灵敏度：笔走这么多像素 = 走完整个行程
 
 
 @dataclass
@@ -91,6 +92,7 @@ class DeviceProfile:
                 tau_limit=float(g.get("tau_limit", 2.0)),
                 rate=float(g.get("rate", 1.2)),
                 direction=int(g.get("direction", 1)),
+                pen_range_px=float(g.get("pen_range_px", 500.0)),
             ),
             notes=list(raw.get("notes", [])),
         )

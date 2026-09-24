@@ -75,27 +75,36 @@ def test_schemas_accept_step_only():
 
 
 def test_gripper_selected_by_index_and_pen_drag_axis(core_service):
-    """选中夹爪后：笔左右拉动驱动开度（上下不动），并进入 joint 模式。"""
+    """选中夹爪后：笔左右**增量跟手**驱动开度（上下不动），抬笔立刻停；进入 joint 模式。"""
     st = core_service.teleop_motor(6)
     assert st["mode"] == "joint" and int(st["joint_index"]) == 6
     core = core_service.core_mapper.core
-    base = core.grip_cmd
+    g_lo, g_hi = core.grip_lim
+    mid = 0.5 * (g_lo + g_hi)
+    core.grip_pos = core.grip_cmd = core.grip_send = mid
 
-    def step():
+    def step(x, y=310.0, tau=0.3):
         if core.pressed:
-            core.set_pen(*core.pen, True)       # 客户端 50Hz 重发；别触发 0.4s 笔超时
-        core.update_feedback(core.q_cmd, None, grip_pos=base, grip_tau=0.3)
+            core.set_pen(x, y, True)                # 客户端 50Hz 重发；别触发 0.4s 笔超时
+        pos = core.grip_pos + float(np.clip(core.grip_send - core.grip_pos, -0.012, 0.012))
+        core.update_feedback(core.q_cmd, None, grip_pos=pos, grip_tau=tau)
         core.step(1 / 100, core.q_cmd.copy())
 
     core.set_pen(480, 310, False)
     core.set_pen(480, 310, True)
-    core.set_pen(480, 150, True)                   # 纯上下 → 不动
     for _ in range(20):
-        step()
-    assert abs(core.grip_cmd - base) < 1e-9
-    core.set_pen(680, 310, True)                   # 右划 200px → 张开端
-    for _ in range(60):
-        core.set_pen(680, 310, True)
-        step()
-    g_hi = core.grip_lim[1]
-    assert np.isclose(core.grip_cmd, min(base + (g_hi - core.grip_lim[0]), g_hi), atol=1e-6)
+        step(480, 150.0)                           # 纯上下 → 不动
+    assert abs(core.grip_cmd - mid) < 1e-9
+
+    for i in range(60):                            # 右划 120px（2px/帧）→ 往张开方向走
+        step(480 + 2.0 * (i + 1))
+    expect = (120.0 / core.args.grip_pen_range) * (g_hi - g_lo)
+    assert core.grip_cmd > mid + 0.5 * expect, f"右划没走开：{np.degrees(core.grip_cmd):.1f}°"
+    assert core.grip_cmd <= g_hi + 1e-9
+
+    grip_at = core.grip_cmd
+    core.set_pen(600, 310, False)                  # 抬笔 → 停在实测位置
+    step(600, tau=0.0)
+    assert abs(core.grip_cmd - core.grip_pos) < 1e-9, "抬笔后应立刻停在实测位置"
+    if grip_at > core.grip_pos + 1e-9:             # 原来目标超前（还没走完）
+        assert core.grip_cmd < grip_at, "抬笔后应丢掉剩余行程，不再追"

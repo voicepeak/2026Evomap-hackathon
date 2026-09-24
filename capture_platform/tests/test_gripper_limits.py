@@ -29,20 +29,30 @@ from rebot_capture.teleop.samples import PenSample
 
 DT = 1 / 100
 TEST_Q = np.array([0.0, 0.35, 0.35, 0.0, 0.0, 0.0])
-GL = 2.0           # 测试用：夹爪"实测"位置（rad）——取行程中段（≈118°，与现场数据一致）
 
 
 def _make_core(core_env):
+    """真机同样的参数（行程/方向/力矩都从机型配置来），实测位置放在行程中段。"""
     _, TeleopCore, CoreArgs, model, fid = core_env
-    profile = DeviceProfile.load()
+    p = DeviceProfile.load()
     core = TeleopCore(model, model.createData(), fid,
                       np.full(6, 60.0), np.full(6, 2.0),
-                      CoreArgs(grip_lo=profile.gripper.lo_deg, grip_hi=profile.gripper.hi_deg))
-    core.prime(TEST_Q.copy(), grip_pos=GL)
+                      CoreArgs(grip_lo=p.gripper.lo_deg, grip_hi=p.gripper.hi_deg,
+                               grip_tau_limit=p.gripper.tau_limit, grip_rate=p.gripper.rate,
+                               grip_pen_range=p.gripper.pen_range_px))
+    core.prime(TEST_Q.copy(), grip_pos=0.0)      # 先 prime（grip_lim 这时才按配置建立）
+    g_lo, g_hi = core.grip_lim
+    mid = 0.5 * (g_lo + g_hi)
+    core.grip_pos = mid                          # 实测 / 目标都放在行程中段
+    core.grip_cmd = mid
+    core.grip_send = mid
+    core.grip_min = core.grip_max = mid
     return core
 
 
-def _step(core, grip_pos=GL, grip_tau=0.0):
+def _step(core, grip_pos=None, grip_tau=0.0):
+    if grip_pos is None:
+        grip_pos = core.grip_pos
     if core.pressed:
         core.set_pen(*core.pen, True)       # 客户端 50Hz 重发；机器忙时别触发 0.4s 笔超时
     core.update_feedback(core.q_cmd, None, grip_pos=grip_pos, grip_tau=grip_tau)
@@ -58,11 +68,11 @@ def _follow(core, pos, rate=0.012):
 # 一、限力：下发值不会离实测太远（= 力矩有上限）
 # ====================================================================== #
 def test_grip_force_limited_caps_error():
-    lo, hi = np.radians(3.0), np.radians(328.0)
-    held = np.radians(120.0)
+    lo, hi = np.radians(-331.0), np.radians(-18.0)
+    held = np.radians(-120.0)
     assert abs(grip_force_limited(hi, held, lo, hi) - (held + GRIP_ERR_MAX)) < 1e-12
     assert abs(grip_force_limited(lo, held, lo, hi) - (held - GRIP_ERR_MAX)) < 1e-12
-    # 偏差 × kp = 电机力矩上限（1.5 N·m 量级，而不是十几 N·m 的堵转）
+    # 偏差 × kp = 电机力矩上限（2N·m 量级，而不是十几 N·m 的堵转）
     assert GRIP_ERR_MAX * GRIP_KP <= GRIP_TAU_LIMIT + 1e-9
     # 限位内正常跟随：不夹
     near = held + 0.3 * GRIP_ERR_MAX
@@ -71,13 +81,28 @@ def test_grip_force_limited_caps_error():
     assert grip_force_limited(hi, hi, lo, hi) <= hi
 
 
-def test_grip_force_limited_from_profile_range():
-    p = DeviceProfile.load()
-    assert p.gripper.lo_deg == 3.0 and p.gripper.hi_deg == 328.0
-    arm = RealArm.__new__(RealArm)                  # 只验证取配置这一段
-    arm._g_lo = np.radians(p.gripper.lo_deg)
-    arm._g_hi = np.radians(p.gripper.hi_deg)
-    assert abs(arm._g_hi - np.radians(328.0)) < 1e-12
+def test_gripper_profile_geometry_is_sane():
+    """机型配置：行程顺序、两端余量、方向标记（换夹爪/重标定后这些必须仍然成立）。
+
+    旧标定（电机原始坐标）：开口机限 −11.9°、闭合机限 +335.4°。
+    程序坐标 = direction × 电机坐标；程序里"角度增大 = 张开"。
+    """
+    p = DeviceProfile.load().gripper
+    assert p.lo_deg < p.hi_deg, "lo/hi 顺序反了"
+    span = p.hi_deg - p.lo_deg
+    assert 120.0 < span < 360.0, f"行程不合理：{span:.0f}°"
+    assert p.direction in (1, -1)
+    assert 100.0 <= p.pen_range_px <= 2000.0
+
+    sgn = float(p.direction)
+    prog_closed = sgn * 335.4          # 机械闭合端（程序坐标）
+    prog_open = sgn * (-11.9)          # 机械开口端（程序坐标）
+    lo_limit, hi_limit = min(prog_closed, prog_open), max(prog_closed, prog_open)
+    assert p.lo_deg >= lo_limit - 0.5, f"闭合端越过机械端：{p.lo_deg} < {lo_limit}"
+    assert p.hi_deg <= hi_limit + 0.5, f"开口端越过机械端：{p.hi_deg} > {hi_limit}"
+    assert p.lo_deg - lo_limit >= 0.0, "闭合端没留余量"
+    assert hi_limit - p.hi_deg >= 10.0, (
+        f"开口端余量太小（容易卡在外面）：{hi_limit - p.hi_deg:.1f}°")
 
 
 # ====================================================================== #
@@ -85,10 +110,11 @@ def test_grip_force_limited_from_profile_range():
 # ====================================================================== #
 def test_gripper_reaches_both_ends_when_free(core_env):
     core = _make_core(core_env)
+    mid = core.grip_pos                 # 测试用的"实测"位置（行程中段）
     g_lo, g_hi = core.grip_lim
 
     core.set_gripper_target(0.0)                    # 闭合行程（原来"到不了"的那头）
-    pos = GL
+    pos = mid
     for _ in range(600):
         pos = _follow(core, pos)                    # 模拟跟随的电机
         _step(core, grip_pos=pos, grip_tau=0.3)
@@ -107,66 +133,73 @@ def test_gripper_reaches_both_ends_when_free(core_env):
 # ====================================================================== #
 def test_gripper_stops_when_blocked_and_holds(core_env):
     core = _make_core(core_env)
+    mid = core.grip_pos
     core.set_gripper_target(0.0)                    # 闭合，但实测卡住不动（夹住东西/到限位）
     for _ in range(40):
-        _step(core, grip_pos=GL, grip_tau=2.0)
+        _step(core, grip_tau=2.0)
     assert core.grip_blocked
     assert "阻力" in core.grip_msg or "限位" in core.grip_msg
     hold = core.grip_cmd
     assert abs(hold - core.grip_hold_pos(-1.0)) < 1e-9
-    assert GL - hold > 0.4 * GRIP_ERR_MAX, "保持点应保留夹持力"
+    assert mid - hold > 0.4 * GRIP_ERR_MAX, "保持点应保留夹持力"
 
     # 同方向继续推 2 秒：位置不能再被"顶"（grip_cmd 不变）
     for _ in range(200):
-        _step(core, grip_pos=GL, grip_tau=2.0)
+        _step(core, grip_tau=2.0)
     assert abs(core.grip_cmd - hold) < 1e-9, "同方向不应继续顶"
     assert core.grip_send <= hold + 1e-9
 
     # 反向（张开）可以继续
     core.set_gripper_target(1.0)
     for _ in range(30):
-        _step(core, grip_pos=GL, grip_tau=0.2)
+        _step(core, grip_tau=0.2)
     assert core.grip_cmd > hold + 0.1
     assert not core.grip_blocked
 
 
 def test_blocked_direction_does_not_leak_to_pen_channel(core_env):
-    """笔控夹爪（位置式）：同方向被挡住后不再顶；反向立刻能动。"""
+    """笔控夹爪（增量跟手）：往张开方向拖、被挡住后同方向不再顶；反向立刻能动。"""
     core = _make_core(core_env)
+    mid = core.grip_pos
     core.select_motor(6)                            # 夹爪
     core.set_pen(0.0, 0.0, False)
-    core.set_pen(0.0, 0.0, True)                    # 落笔（锚点 0）
-    core.set_pen(200.0, 0.0, True)                  # 右划 = 张开（拖到最开）
+    core.set_pen(0.0, 0.0, True)                    # 落笔
+    # 往右拖（张开方向）→ 实测卡住不动 → 会被判"挡住"
     for i in range(40):
-        if i % 15 == 0:
-            core.set_pen(200.0, 0.0, True)          # 保持笔样本新鲜（客户端本来就 50Hz 重发）
-        _step(core, grip_pos=GL, grip_tau=2.0)
+        core.set_pen(20.0 * (i + 1), 0.0, True)     # 每帧 +20px（约 13.9°/帧）
+        _step(core, grip_tau=2.0)
     assert core.grip_blocked, "夹爪卡住时笔控也应停手"
     blocked_at = core.grip_cmd
 
-    for i in range(60):
-        if i % 15 == 0:
-            core.set_pen(200.0, 0.0, True)
-        _step(core, grip_pos=GL, grip_tau=2.0)
-    assert abs(core.grip_cmd - blocked_at) < 1e-9, "同方向（笔仍停在最右）不应继续顶"
+    # 同方向继续拖：不再推进目标
+    x = 20.0 * 40
+    for _ in range(60):
+        x += 20.0
+        core.set_pen(x, 0.0, True)
+        _step(core, grip_tau=2.0)
+    assert abs(core.grip_cmd - blocked_at) < 1e-9, "同方向（继续往右拖）不应继续顶"
 
-    core.set_pen(-200.0, 0.0, True)                 # 左划 = 闭合（反向）
-    for _ in range(30):
-        _step(core, grip_pos=GL, grip_tau=0.2)
+    # 反向拖（闭合）：可以动
+    for i in range(30):
+        x -= 20.0
+        core.set_pen(x, 0.0, True)
+        _step(core, grip_tau=0.2)
     assert core.grip_cmd < blocked_at - 0.05, "反方向应能继续"
+    assert core.grip_cmd < mid, "应该往闭合方向走了"
 
 
 def test_grip_torque_spike_during_free_travel_is_not_a_block(core_env):
     """正常行程里的力矩尖峰（惯性/阻尼）不能误判成"被挡住"。"""
     core = _make_core(core_env)
+    mid = core.grip_pos
     core.set_gripper_target(0.0)
-    pos = GL
+    pos = mid
     for i in range(150):
         pos = _follow(core, pos)
         tau = 2.0 if i in (10, 11, 40) else 0.3     # 偶发力矩尖峰
         _step(core, grip_pos=pos, grip_tau=tau)
     assert not core.grip_blocked, "电机一直在走，不该判成被挡住"
-    assert pos < GL - 1.0, f"夹爪应该已经走了不少：{np.degrees(pos):.1f}°"
+    assert pos < mid - 1.0, f"夹爪应该已经走了不少：{np.degrees(pos):.1f}°"
 
 
 # ====================================================================== #
@@ -271,59 +304,85 @@ def test_gripper_direction_flip_read_and_send():
     assert abs(g["group"].sent[-1] - (-np.radians(95.0))) < 1e-6
 
 
-def test_pen_left_right_drag_is_positional(core_env):
-    """夹爪：笔左右拉动 = 位置式（拖多少开多少），右划到张开端、左划到闭合端。"""
+def test_pen_gripper_drag_is_incremental_and_stops_on_release(core_env):
+    """夹爪笔控：增量跟手（笔移多少、开度按比例动多少），抬笔/笔停立刻停。"""
     core = _make_core(core_env)
+    mid = core.grip_pos
     core.select_motor(6)
     g_lo, g_hi = core.grip_lim
+    span = g_hi - g_lo
 
     core.set_pen(480, 310, False)                   # 先抬笔
-    core.set_pen(480, 310, True)                    # 落笔（锚点=480，开度起点=当前）
-    start = core.grip_cmd
+    core.set_pen(480, 310, True)                    # 落笔
+    base = core.grip_cmd
 
-    # 纯上下拖动：夹爪不应有任何变化（轴是左右）
-    core.set_pen(480, 150, True)
+    # 纯上下拖动：夹爪不动
     for _ in range(20):
-        _step(core, grip_pos=GL, grip_tau=0.3)
-    assert abs(core.grip_cmd - start) < 1e-9, "上下方向不应驱动夹爪"
+        core.set_pen(480, 150, True)
+        _step(core, grip_tau=0.3)
+    assert abs(core.grip_cmd - base) < 1e-9, "上下方向不应驱动夹爪"
 
-    # 右划 100px = 半个行程
-    core.set_pen(580, 310, True)
+    # 缓慢右划 100px（分散到 50 帧 = 2px/帧）：按比例动 100/pen_range × 全行程
+    pos = mid
+    for i in range(50):
+        core.set_pen(480 + 2.0 * (i + 1), 310, True)
+        pos = _follow(core, pos)
+        _step(core, grip_pos=pos, grip_tau=0.3)
+    expect = min(base + (100.0 / core.args.grip_pen_range) * span, g_hi)
+    assert abs(core.grip_cmd - expect) < np.radians(1.5), \
+        f"增量映射不对：{np.degrees(core.grip_cmd):.1f}° vs 期望 {np.degrees(expect):.1f}°"
+    assert core.grip_cmd > base, "右划应往张开方向走"
+
+    # 抬笔：立刻停（目标回到实测，不再追剩余行程）
+    core.set_pen(580, 310, False)
+    core.update_feedback(core.q_cmd, None, grip_pos=mid, grip_tau=0.3)
     core.step(DT, core.q_cmd.copy())
-    assert abs(core.grip_cmd - min(start + 0.5 * (g_hi - g_lo), g_hi)) < 1e-6
+    assert abs(core.grip_cmd - mid) < 1e-9, "抬笔后应停在实测位置，不再动"
 
-    # 右划 200px（=pen_range）= 全行程 → 张开端（夹爪跟着走）
-    pos = GL
-    for i in range(400):
-        if i % 20 == 0:
-            core.set_pen(680, 310, True)            # 模拟客户端 50Hz 重发（别触发 0.4s 超时）
+
+def test_pen_gripper_drag_scale_and_clamp(core_env):
+    """拖满 pen_range = 全行程；再拖只会夹在端点（不会越界）。"""
+    core = _make_core(core_env)
+    mid = core.grip_pos
+    core.select_motor(6)
+    g_lo, g_hi = core.grip_lim
+    core.set_pen(0, 310, False)
+    core.set_pen(0, 310, True)
+    pos = mid
+    n = 100
+    for i in range(n):                              # 慢慢往右拖满 pen_range
+        core.set_pen(core.args.grip_pen_range * (i + 1) / n, 310, True)
         pos = _follow(core, pos)
         _step(core, grip_pos=pos, grip_tau=0.3)
-    assert abs(core.grip_cmd - g_hi) < 1e-9, f"右划应到张开端：{np.degrees(core.grip_cmd):.1f}°"
-    assert abs(pos - g_hi) < np.radians(1.0), "夹爪应跟到张开端"
-
-    # 左划（同一锚点）= 闭合端
-    for i in range(600):
-        if i % 20 == 0:
-            core.set_pen(280, 310, True)            # 从 480 向左拉 200px
+    assert abs(core.grip_cmd - g_hi) < np.radians(2.0), f"应到开口端：{np.degrees(core.grip_cmd):.1f}°"
+    for i in range(40):                              # 再拖：不动（夹在端点）
+        core.set_pen(core.args.grip_pen_range * 2, 310, True)
         pos = _follow(core, pos)
         _step(core, grip_pos=pos, grip_tau=0.3)
-    assert abs(core.grip_cmd - g_lo) < 1e-9, f"左划应到闭合端：{np.degrees(core.grip_cmd):.1f}°"
-    assert abs(pos - g_lo) < np.radians(1.0), "夹爪应跟到闭合端（原来到不了的那头）"
+    assert abs(core.grip_cmd - g_hi) < 1e-9
 
-    # 松笔：停在拖到的位置
-    core.set_pen(280, 310, False)
-    hold = core.grip_cmd
-    for _ in range(30):
-        _step(core, grip_pos=pos, grip_tau=0.3)
-    assert abs(core.grip_cmd - hold) < 1e-9, "松笔后应停在原处"
+
+def test_pen_gripper_jitter_does_not_drift(core_env):
+    """笔的像素抖动（±1px）不能把夹爪慢慢带跑（死区累计）。"""
+    core = _make_core(core_env)
+    mid = core.grip_pos
+    core.select_motor(6)
+    core.set_pen(480, 310, False)
+    core.set_pen(480, 310, True)
+    core.step(DT, core.q_cmd.copy())
+    base = core.grip_cmd
+    for i in range(200):
+        core.set_pen(480 + (1.0 if i % 2 else -1.0), 310, True)   # 来回抖 1px
+        core.update_feedback(core.q_cmd, None, grip_pos=mid, grip_tau=0.3)
+        core.step(DT, core.q_cmd.copy())
+    assert abs(core.grip_cmd - base) < np.radians(1.0), "抖动把目标带跑了"
 
 
 def test_core_command_carries_gripper_tau_message(core_env):
     core = _make_core(core_env)
     core.set_gripper_target(0.0)
     for _ in range(20):
-        _step(core, grip_pos=GL, grip_tau=2.0)
+        _step(core, grip_tau=2.0)
     cmd = core.step(DT, core.q_cmd.copy())
     assert cmd.grip_send is not None
     assert core.grip_msg in ("", cmd.msg) or "阻力" in core.grip_msg or "限位" in core.grip_msg
@@ -336,7 +395,7 @@ def test_pen_pressure_sample_defaults_dont_touch_gripper(core_env):
     core.set_pen(480, 310, True)
     core.set_pen(480, 160.0, True)
     for _ in range(60):
-        _step(core, grip_pos=GL, grip_tau=0.0)
+        _step(core, grip_tau=0.0)
     assert abs(core.grip_cmd - base) < 1e-9
 
 
