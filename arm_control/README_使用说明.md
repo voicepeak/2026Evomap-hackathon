@@ -17,6 +17,7 @@
 | 工具 | `tools/return_home.py` | 带力矩/跟随监测的温和归零（卡住会停） |
 | 工具 | `tools/joint_demo.py` | 逐电机小角度演示（识别每个电机作用） |
 | 工具 | `tools/grip_calib.py` | 夹爪行程标定 / 手动驱动（带力矩保护） |
+| 工具 | `tools/grip_zero.py` | 夹爪零点重设（0° = 爪片合到位）+ 行程复测，只动夹爪 |
 | 工具 | `tools/grip_check.py` | 夹爪状态诊断（位置/故障码/软响应） |
 | 配置 | `config/rebotarm_rs.yaml` | 电机、CAN、MIT kp/kd 参数 |
 | 数据 | `config/poses.json` | 姿势预设（教学记录，可跨次使用） |

@@ -219,7 +219,7 @@ curl -s http://127.0.0.1:8787/api/library | python3 -m json.tool | head -30
 | 自动成功判定 | 现在靠人工按"成功"；需接入夹爪力/位置判定 |
 | 溯源 | MANIFEST 有哈希；设备序列号/标定/授权字段待补 |
 | 限位占用门 | J2/J3 的**零位就是下限**，停在折叠零位会被算成"限位占用"→ 可能判 F（演示前彩排确认，必要时用上面的 `include_failed`） |
-| 夹爪行程 | 程序范围 3°~328°（机械端 −11.9°/+335.4°）。若现场发现"闭合端到不了 / 顶得早"，先用 `arm_control/tools/grip_calib.py --dir ∓1` 复测机械端，再改 `configs/rebot_b601_rs.json` 的 `gripper.lo_deg/hi_deg`（或 `tau_limit` 加力） |
+| 夹爪行程 | 程序范围 3°~328°（机械端 −11.9°/+335.4°）。若现场发现"闭合端到不了 / 顶得早"或**零点不在合上位**，用 `arm_control/tools/grip_zero.py`（只动夹爪）把"合到位"设成 0° 并复测整程，再改 `configs/rebot_b601_rs.json` 的 `gripper.lo_deg/hi_deg`（或 `tau_limit` 加力） |
 | 回放来源 | 界面上的 1×/2×/4× 用**内存里最近的 episode**；服务重启后需先录一条或先打包 |
 
 ---
