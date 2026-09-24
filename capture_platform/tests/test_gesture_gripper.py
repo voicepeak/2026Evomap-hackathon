@@ -104,22 +104,27 @@ def test_gesture_worker_open_and_fist():
     assert worker.state()["enabled"] is False
 
 
-def test_pen_drives_gripper_when_gripper_selected(core_env):
-    """选中"夹爪"后，笔上划 = 张开行程、下划 = 闭合行程（手势之外的手动兜底）。"""
+def test_pen_left_right_drives_gripper(core_env):
+    """选中"夹爪"后，笔右划 = 张开行程、左划 = 闭合行程（位置式拖动；手势之外的手动兜底）。"""
     core = _make_core(core_env)
     core.select_motor(6)
     base = core.grip_cmd
+    pos = base
     core.set_pen(0.0, 0.0, True)
-    core.set_pen(0.0, -150.0, True)          # 上划
-    for _ in range(30):
+    core.set_pen(150.0, 0.0, True)           # 右划
+    for _ in range(60):
+        pos = pos + float(np.clip(core.grip_send - pos, -0.02, 0.02))
+        core.update_feedback(core.q_cmd, None, grip_pos=pos, grip_tau=0.3)
         core.step(DT, core.q_cmd.copy())
-    assert core.grip_cmd > base + 1e-6, "上划应向张开方向走"
+    assert core.grip_cmd > base + 1e-6, "右划应向张开方向走"
 
     down = core.grip_cmd
-    core.set_pen(0.0, +150.0, True)          # 下划（锚点仍在原点）
-    for _ in range(30):
+    core.set_pen(-150.0, 0.0, True)          # 左划（锚点仍在原点）
+    for _ in range(60):
+        pos = pos + float(np.clip(core.grip_send - pos, -0.02, 0.02))
+        core.update_feedback(core.q_cmd, None, grip_pos=pos, grip_tau=0.3)
         core.step(DT, core.q_cmd.copy())
-    assert core.grip_cmd < down, "下划应向闭合方向走"
+    assert core.grip_cmd < down, "左划应向闭合方向走"
 
 
 def test_same_gesture_does_not_repeat_but_rearms_after_gap():

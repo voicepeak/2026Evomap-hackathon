@@ -5,7 +5,7 @@
 （冻结/对齐/回放/漂浮/直控 → 速度指令 → 安全盒 → 雅可比阻尼最小二乘 → 零空间 →
 限幅积分 → 夹爪 → 力矩保护）。
 
-平台在此基础上补了三处手感（都已参数化在 `CoreArgs`，可关掉回到上游行为）：
+平台在此基础上补了四处（都已参数化在 `CoreArgs` / 机型配置，可关掉回到上游行为）：
 
 1. **速度指令整形**：末端速度/角速度/J6 自转/关节直控速度都先过
    "一阶低通 + 加速度限幅"再做控制。原来这些指令都是阶跃（落笔、松手、
@@ -16,6 +16,11 @@
    P/I 补摩擦与负载造成的稳态速度差，D 抑制过冲；输出修正量限幅 + 抗饱和。
 3. **姿态模式速度档**：角速度上限随 慢/中/快 缩放（原来三档完全一样），
    并把笔的死区/曲线调得更跟手（`DEAD_PX` 3px、`EXPO` 1.2）。
+4. **夹爪**（两个平台扩展，参数见 `CoreArgs.grip_*` 与机型配置 `gripper`）：
+   - 笔左右拉动是**位置式**：右划 = 张开、左划 = 闭合，拖 200px 走完全行程，
+     松笔停在原处（不像关节那样"按住一直走"）；
+   - 力控/堵转保护：下发值夹在"实测 ± τ上限/kp"内（力矩有上限），推着不动
+     0.15~0.6s 就停手 + 半力保持，同方向不再顶（反向/换手势继续）。
 
 `spatial_teleop.py` 保持不动；本文件供平台 / 无头脚本复用。
 
@@ -83,6 +88,8 @@ PRESET_FILE = Path(__file__).resolve().parent / "config" / "poses.json"
 # ── 平台扩展：电机直控（mode="joint"）的笔轴映射 ──────────────────────────────
 # axis="y"：笔上下象限（俯仰类电机）；axis="x"：笔左右象限（回转/偏航类电机）。
 # sign：笔向上（y）/向右（x）为正时，对应的关节正方向；个别方向反了改这里即可。
+# 夹爪（6）用**左右拉动**：笔右划 = 张开、左划 = 闭合，拖动量直接对应开度
+# （位置式，不是"按住一直走"；松笔停在原处），见 step() 里的 q_grip_direct。
 JOINT_PEN_MAP: dict[int, tuple[str, float]] = {
     0: ("x", +1.0),   # J1 肩部水平回转
     1: ("y", +1.0),   # J2 肩部俯仰
@@ -90,7 +97,7 @@ JOINT_PEN_MAP: dict[int, tuple[str, float]] = {
     3: ("y", +1.0),   # J4 腕部俯仰（+ = 抬头）
     4: ("x", +1.0),   # J5 腕部偏航
     5: ("x", +1.0),   # J6 腕部自转
-    6: ("y", +1.0),   # 夹爪：上划 = 张开行程，下划 = 闭合行程（手势之外的手动兜底）
+    6: ("x", +1.0),   # 夹爪：左划 = 闭合、右划 = 张开（拖动开度；手势之外的手动兜底）
 }
 JOINT_PEN_RATE = math.radians(60.0)   # 笔满偏时的关节速度（与 Q/A 直控一致）
 MOTOR_NAMES = ("J1 肩部水平", "J2 肩部俯仰", "J3 肘部俯仰",
@@ -364,6 +371,7 @@ class TeleopCore:
         self._grip_block_dir = 0.0       # 挡住的方向（+1 = 往大开，−1 = 往闭合）
         self._grip_stall_t: float | None = None
         self._grip_stall_pos = 0.0
+        self._grip_pen_start = 0.0       # ★ 笔按下的那一刻的开度（左右拉动 = 位置式的起点）
         self._grip_ext_target: float | None = None   # 外部（手势）行程目标 0=合 1=开
 
         self._twist_prev = 0.0
@@ -498,6 +506,7 @@ class TeleopCore:
                 r = float(self.args.grip_range)
                 self.grip_lim = (self.grip_pos - r, self.grip_pos + r)
             self.grip_min = self.grip_max = float(grip_pos)
+        self._grip_pen_start = float(self.grip_cmd)
         self.grip_clear_block()
 
     # ====================================================================== #
@@ -508,6 +517,8 @@ class TeleopCore:
         self.anchor = (float(x), float(y))
         self.pressed = True
         self.pen_t = time.perf_counter()
+        # 夹爪是"位置式拉动"：记下按下时的开度，之后拖动量直接对应开度变化
+        self._grip_pen_start = float(self.grip_cmd)
 
     def pen_move(self, x: float, y: float) -> None:
         self.pen = (float(x), float(y))
@@ -550,6 +561,7 @@ class TeleopCore:
             self.p_ref = np.asarray(joint_to_pose(self.q_cmd)[0], float).copy()
         self.anchor = self.pen
         self._reset_shapers()      # 换模式 = 换指令源：上一段速度不许漏到新模式
+        self._grip_pen_start = float(self.grip_cmd)   # 拉动起点跟着重锚
         if mode == "joint":
             self.grip_clear_block()   # 显式选中夹爪 = 允许再推一次
             self.msg = self.motor_msg()
@@ -581,7 +593,7 @@ class TeleopCore:
 
     def motor_msg(self) -> str:
         if self.j_sel >= 6 or self.j_sel not in JOINT_PEN_MAP:
-            return "电机直控：夹爪（笔上=张开 / 下=闭合）"
+            return "电机直控：夹爪（笔左划=闭合 / 右划=张开，拉动多少开多少）"
         axis = JOINT_PEN_MAP[self.j_sel][0]
         return f"电机直控：{MOTOR_NAMES[self.j_sel]}（笔{'上下' if axis == 'y' else '左右'}）"
 
@@ -745,7 +757,9 @@ class TeleopCore:
         self._was_float = False
 
         # ── 0a2. 电机直控（平台扩展）：笔按电机功能象限驱动所选关节 ──
+        # 夹爪（6）例外：左右拉动是**位置式**——拖动量直接对应开度（拖滑块），见 q_grip_direct。
         j_direct = 0.0
+        q_grip_direct: float | None = None
         if (mode == "joint" and pressed and not freeze
                 and replay is None and self.selftest_cmd is None
                 and int(self.j_sel) in JOINT_PEN_MAP):
@@ -753,8 +767,14 @@ class TeleopCore:
             dx = pen[0] - anchor[0]
             dy = pen[1] - anchor[1]
             disp = (-dy if axis == "y" else dx) * sign
-            j_direct = vel_from_px(disp, JOINT_PEN_RATE, self.args.pen_range, self.args.dead,
-                                   self.args.expo)
+            if int(self.j_sel) == 6:
+                # 夹爪：笔左/右拉满（=pen_range）对应全行程；松笔停住，不"按住一直走"
+                g_lo, g_hi = self.grip_lim
+                f = float(np.clip(disp / max(float(self.args.pen_range), 1.0), -1.0, 1.0))
+                q_grip_direct = float(np.clip(self._grip_pen_start + f * (g_hi - g_lo), g_lo, g_hi))
+            else:
+                j_direct = vel_from_px(disp, JOINT_PEN_RATE, self.args.pen_range, self.args.dead,
+                                       self.args.expo)
 
         # ── 0b. 关节直控：参考跟随，避免笛卡尔任务拉扯 ──
         j_cmd = 0.0 if freeze else self.j_req
@@ -934,7 +954,13 @@ class TeleopCore:
             g_lo, g_hi = self.grip_lim
             err_max = self.grip_err_max()
             rate = float(self.args.grip_rate)
-            if abs(j_ref) > 1e-6 and j_sel == 6:
+            if q_grip_direct is not None:
+                # 笔左右拉动（位置式）：直接拖开度；被挡住的同方向不再顶
+                d = math.copysign(1.0, q_grip_direct - self.grip_pos)
+                if not self.grip_blocked_towards(d):
+                    self.grip_cmd = float(np.clip(q_grip_direct, g_lo, g_hi))
+            elif abs(j_ref) > 1e-6 and j_sel == 6:
+                # 键盘兜底（Q/A 按住）：按速度走
                 d = math.copysign(1.0, j_ref)
                 if not self.grip_blocked_towards(d):
                     self.grip_cmd = float(np.clip(self.grip_cmd + d * rate * dt, g_lo, g_hi))
