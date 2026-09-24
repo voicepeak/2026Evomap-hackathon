@@ -72,6 +72,10 @@ class MockArm:
         lo, hi = math.radians(3.0), math.radians(328.0)
         return lo + float(self._grip) * (hi - lo)
 
+    def grip_tau(self) -> float:
+        """夹爪电机力矩（N·m）——mock 没有夹爪电机，恒 0。"""
+        return 0.0
+
     def send_mit(self, q6, kp, kd, tau, grip_rad: float | None = None) -> None:
         """原始 MIT 下发（teleop_core 路径）。"""
         q = np.asarray(q6, dtype=float).reshape(-1)[: self.n]

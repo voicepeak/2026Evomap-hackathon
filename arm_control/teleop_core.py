@@ -67,7 +67,11 @@ GRIP_RATE = 1.20
 GRIP_RANGE = 3.00
 GRIP_LO = math.radians(3.0)
 GRIP_HI = math.radians(328.0)
-GRIP_TAU_LIMIT = 1.0
+# ★ 平台调过：1.0 → 2.0 N·m。1.0 太小：位置环里 τ ≈ kp·偏差，而 kd 阻尼在
+#   1.2 rad/s 时就要 2.4 N·m，偏差还没到限就已经"有阻力"了 → 夹爪走不动/走走停停。
+#   2.0 N·m 能让夹爪按额定速度走（0.85 rad/s 量级），又远低于电机峰值 14 N·m；
+#   真正防夹伤靠"限偏差 = 限力矩"+ 堵转停手（见 CoreArgs.grip_*），不是靠这个阈值。
+GRIP_TAU_LIMIT = 2.0
 DAMPING = 0.02
 BX = (0.14, 0.46)
 BY = (-0.30, 0.30)
@@ -244,6 +248,11 @@ class CoreArgs:
     grip_hi: float = 328.0
     grip_rate: float = GRIP_RATE
     u_max_clip: float = 0.0   # >0 时对空间速度做整体限幅（上游未用，保留位）
+    # ── 夹爪力控（★ 平台新增）：别再"顶死/卡住" ──
+    grip_tau_limit: float = GRIP_TAU_LIMIT      # 电机力矩上限（N·m）：到它就判定"有阻力/到限位"
+    grip_stall_s: float = 0.6                   # 想走但实测不动超过这么久 → 认定被挡住（无力矩信号时的兜底）
+    grip_stall_fast_s: float = 0.15             # 力矩已超限时的快速判定（有反馈时反应更快）
+    grip_hold_frac: float = 0.5                 # 停手后保留的夹持力比例（0.5 → 约 0.75N·m，能抱住东西）
     # ── 速度指令整形（★ 平台新增）：只削"起停/反向的瞬间跳变"，不降额定速度 ──
     v_acc: float = 1.2         # 末端加速度上限（m/s²）
     v_tau: float = 0.03        # 末端速度一阶低通（s）
@@ -351,6 +360,10 @@ class TeleopCore:
         self.grip_msg = ""
         self.grip_min = 0.0
         self.grip_max = 0.0
+        self.grip_blocked = False        # ★ 本次行程被挡住（到限位/有阻力），同方向不再顶
+        self._grip_block_dir = 0.0       # 挡住的方向（+1 = 往大开，−1 = 往闭合）
+        self._grip_stall_t: float | None = None
+        self._grip_stall_pos = 0.0
         self._grip_ext_target: float | None = None   # 外部（手势）行程目标 0=合 1=开
 
         self._twist_prev = 0.0
@@ -433,6 +446,36 @@ class TeleopCore:
         return float(ref) + corr
 
     # ====================================================================== #
+    # 夹爪：限力矩 + 堵转停手（★ 平台）
+    # ====================================================================== #
+    def grip_err_max(self) -> float:
+        """位置环的"安全偏差"：偏差 × kp = 电机力矩，因此偏差夹住 = 力矩有上限。
+
+        tau = kp·(目标−实测)（堵转时速度项为 0），所以
+        `err_max = grip_tau_limit / GRIP_KP`（1.5N·m / 20 ≈ 0.075 rad ≈ 4.3°）。
+        """
+        return max(0.02, float(self.args.grip_tau_limit) / max(float(GRIP_KP), 1e-6))
+
+    def grip_hold_pos(self, direction: float) -> float:
+        """停手后的"半力保持点"：自锁机构靠它抱住东西，又不会一直磨。"""
+        g_lo, g_hi = self.grip_lim
+        d = math.copysign(1.0, direction) if direction else 0.0
+        return float(np.clip(self.grip_pos + d * float(self.args.grip_hold_frac) * self.grip_err_max(),
+                             g_lo, g_hi))
+
+    def grip_clear_block(self) -> None:
+        """放开"被挡住"的标记：换手势 / 反向 / 重新对齐时调用。"""
+        self.grip_blocked = False
+        self._grip_block_dir = 0.0
+        self._grip_stall_t = None
+        self._grip_stall_pos = self.grip_pos
+
+    def grip_blocked_towards(self, direction: float) -> bool:
+        """这个方向是否已经被挡住（挡住就不许再顶，反向可以）。"""
+        return bool(self.grip_blocked) and direction != 0.0 and \
+            math.copysign(1.0, direction) == self._grip_block_dir
+
+    # ====================================================================== #
     # 初始化（使能后调用一次，等价 control_loop 的启动段）
     # ====================================================================== #
     def prime(self, q0: np.ndarray, grip_pos: float | None = None) -> None:
@@ -455,6 +498,7 @@ class TeleopCore:
                 r = float(self.args.grip_range)
                 self.grip_lim = (self.grip_pos - r, self.grip_pos + r)
             self.grip_min = self.grip_max = float(grip_pos)
+        self.grip_clear_block()
 
     # ====================================================================== #
     # 输入接口（等价 GUI 事件）
@@ -507,6 +551,7 @@ class TeleopCore:
         self.anchor = self.pen
         self._reset_shapers()      # 换模式 = 换指令源：上一段速度不许漏到新模式
         if mode == "joint":
+            self.grip_clear_block()   # 显式选中夹爪 = 允许再推一次
             self.msg = self.motor_msg()
         elif mode == "ori":
             self.msg = "姿态模式：笔上下=俯仰 左右=摆头"
@@ -521,8 +566,8 @@ class TeleopCore:
     def set_gripper_target(self, frac: float) -> None:
         """平台扩展：外部（摄像头手势）设定夹爪行程目标，0 = 闭合、1 = 张开。
 
-        与上次相同的请求直接忽略：到限位/有阻力被力矩保护退回后，不会反复顶；
-        等行程下一次变化（换手势）再继续。真正下发仍走 step() 的限速与力矩保护。
+        与上次相同的请求直接忽略：到限位/有阻力停手后，不会反复顶；
+        等行程下一次变化（换手势）再继续。真正下发仍走 step() 的限速 + 限力矩。
         """
         if not self.grip_ready or not self.args.gripper:
             return
@@ -532,6 +577,7 @@ class TeleopCore:
         self._grip_ext_target = frac
         g_lo, g_hi = self.grip_lim
         self.grip_cmd = float(g_lo + frac * (g_hi - g_lo))
+        self.grip_clear_block()      # 新的行程目标 = 新的尝试
 
     def motor_msg(self) -> str:
         if self.j_sel >= 6 or self.j_sel not in JOINT_PEN_MAP:
@@ -556,6 +602,7 @@ class TeleopCore:
         # 与上游按键 R 一致：重设笔锚点，避免重新对齐后按旧位移继续推动机械臂。
         self.anchor = self.pen
         self.align_req = True
+        self.grip_clear_block()
 
     def record_preset(self, i: int) -> dict:
         q = np.asarray(self.q_cmd, float).copy() if self.q_cmd is not None else np.zeros(6)
@@ -874,26 +921,62 @@ class TeleopCore:
 
         tau = compute_generalized_gravity(self.model, pad_q_for_model(self.model, q_new, 6), self.data)[:6]
 
-        # ── 夹爪直控 + 力矩保护 ──
+        # ── 夹爪：行程跟目标 + 限力矩 + 堵转停手（★ 平台重写） ──
+        # 原来两个问题：
+        # 1) 下发值按 1.5× 速度追目标 → 目标跑到前面，位置环只能靠"多出力矩"追速；
+        # 2) 力矩保护在平台这条链路上是失效的：real_arm 把目标拉回实测后，
+        #    下一帧又被这里的目标覆盖 → 电机顶着 14N·m 堵转 → RobStride 锁存故障
+        #    → 夹爪彻底不动（数据里能看到：命令在动、位置一动不动）。
+        # 现在：目标与下发 1:1 限速；堵转（推着不动）就停手并保留半力夹持；
+        # 同方向不再顶，反向/换手势才重新尝试。
         grip_send_out: float | None = None
         if self.grip_ready and self.args.gripper:
             g_lo, g_hi = self.grip_lim
+            err_max = self.grip_err_max()
+            rate = float(self.args.grip_rate)
             if abs(j_ref) > 1e-6 and j_sel == 6:
-                self.grip_cmd = float(np.clip(
-                    self.grip_cmd + math.copysign(float(self.args.grip_rate) * dt, j_ref), g_lo, g_hi))
-            step_g = float(self.args.grip_rate) * 1.5 * dt
+                d = math.copysign(1.0, j_ref)
+                if not self.grip_blocked_towards(d):
+                    self.grip_cmd = float(np.clip(self.grip_cmd + d * rate * dt, g_lo, g_hi))
+            step_g = rate * dt
             self.grip_send = float(np.clip(
                 self.grip_send + float(np.clip(self.grip_cmd - self.grip_send, -step_g, step_g)), g_lo, g_hi))
             grip_send_out = self.grip_send
-            # 力矩保护：只要还在往目标走（目标 ≠ 实测）且力矩超限，就退回实测并停下本次行程
-            # （含手势/外部目标；退回后相同目标不会再顶，直到行程变化）
-            driving_g = abs(self.grip_cmd - self.grip_pos) > math.radians(2.0)
-            if driving_g and abs(self.grip_tau) > GRIP_TAU_LIMIT:
-                self.j_req = 0.0
-                self.grip_cmd = float(self.grip_pos)
-                self.grip_send = float(self.grip_pos)
-                self.grip_msg = (f"⚠️ 到限位/有阻力（{self.grip_tau:+.2f}N·m）已松手，"
-                                 f"位置 {math.degrees(self.grip_pos):+.1f}°")
+
+            want = self.grip_send - self.grip_pos
+            pushing = abs(want) > 0.6 * err_max          # 偏差已到限力区：电机在出力
+            if not pushing:
+                self._grip_stall_t = None
+                self._grip_stall_pos = self.grip_pos
+                # 已经退到保持点 / 目标换方向 → 解除"挡住"标记
+                if self.grip_blocked and (abs(want) < 1e-9
+                                          or math.copysign(1.0, want) != self._grip_block_dir):
+                    self.grip_clear_block()
+            elif abs(self.grip_pos - self._grip_stall_pos) > math.radians(0.5):
+                self._grip_stall_pos = self.grip_pos  # 还在走：计时重来
+                self._grip_stall_t = 0.0
+            else:
+                # 推着不动：按控制周期累加（不依赖墙钟，仿真/自检里也一致）
+                self._grip_stall_t = dt if self._grip_stall_t is None else self._grip_stall_t + dt
+                # 力矩已经贴近上限 → 快速判定（位置环堵转时实测力矩 ≈ 偏差×kp ≈ 上限，
+                # 所以用 0.8× 而不是严格大于，否则永远差一点点不触发）
+                fast = abs(self.grip_tau) >= 0.8 * float(self.args.grip_tau_limit)
+                limit_s = float(self.args.grip_stall_fast_s) if fast else float(self.args.grip_stall_s)
+                if self._grip_stall_t > limit_s:
+                    d = math.copysign(1.0, want)
+                    hold = self.grip_hold_pos(d)
+                    self.grip_cmd = hold
+                    self.grip_send = hold
+                    self.grip_blocked = True
+                    self._grip_block_dir = d
+                    self._grip_stall_t = None
+                    self._grip_stall_pos = self.grip_pos
+                    self.j_req = 0.0
+                    self.grip_msg = (
+                        f"夹爪到限位/有阻力（{self.grip_tau:+.2f}N·m）：停在 "
+                        f"{math.degrees(self.grip_pos):+.1f}°，半力保持；同方向不再顶，"
+                        f"反向/换手势可继续")
+                    self.msg = self.grip_msg
 
         # ── 反馈与力矩保护 ──
         self._n += 1

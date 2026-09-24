@@ -34,7 +34,11 @@ class RebotCoreMapper:
         self.model = self.repo.load_robot_model()
         self.data = self.model.createData()
         self.fid = self.repo.get_end_effector_frame_id(self.model)
-        self.core = TeleopCore(self.model, self.data, self.fid, profile.kp_array(), profile.kd_array(), CoreArgs())
+        # 夹爪可用行程/力矩/速度从机型配置来（见 configs/rebot_b601_rs.json 的 gripper）
+        gp = profile.gripper
+        args = CoreArgs(grip_lo=float(gp.lo_deg), grip_hi=float(gp.hi_deg),
+                        grip_tau_limit=float(gp.tau_limit), grip_rate=float(gp.rate))
+        self.core = TeleopCore(self.model, self.data, self.fid, profile.kp_array(), profile.kd_array(), args)
 
         self._last_t = time.monotonic()
         self._last_cmd = None
@@ -53,7 +57,8 @@ class RebotCoreMapper:
     # 主步进：输入笔样本 → CoreCommand
     # ------------------------------------------------------------------ #
     def step(self, pen: PenSample | None, q_meas: np.ndarray, tau_meas: np.ndarray | None = None,
-             grip_rad: float | None = None, vel_meas: np.ndarray | None = None) -> Any:
+             grip_rad: float | None = None, vel_meas: np.ndarray | None = None,
+             grip_tau: float | None = None) -> Any:
         now = time.monotonic()
         dt = now - self._last_t
         self._last_t = now
@@ -70,7 +75,8 @@ class RebotCoreMapper:
             self.core.set_pen(0.0, 0.0, False, shift=False, twist=twist)
 
         cmd = self.core.step(dt, np.asarray(q_meas, dtype=float)[:6], tau_meas, vel_meas=vel_meas)
-        self.core.update_feedback(np.asarray(q_meas, dtype=float)[:6], tau_meas, grip_pos=grip_rad)
+        self.core.update_feedback(np.asarray(q_meas, dtype=float)[:6], tau_meas,
+                                  grip_pos=grip_rad, grip_tau=grip_tau)
         self._last_cmd = cmd
         return cmd
 
@@ -135,6 +141,8 @@ class RebotCoreMapper:
             "gripper_send_deg": round(float(np.degrees(c.grip_send)), 1) if c.grip_ready else None,
             "gripper_pos_deg": round(float(np.degrees(c.grip_pos)), 1) if c.grip_ready else None,
             "gripper_tau": round(float(c.grip_tau), 3),
+            "gripper_blocked": bool(c.grip_blocked),
+            "gripper_msg": c.grip_msg,
             "tau_limit": float(c.tau_limit),
             "posture_k": float(c.args.posture_k),
             "box": bool(c.args.box),

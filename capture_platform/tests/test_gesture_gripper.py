@@ -39,17 +39,33 @@ def test_gripper_target_maps_travel_and_ramps(core_env):
     assert abs(core.grip_cmd - g_hi) < 1e-9
 
 
-def test_gripper_target_stops_on_torque_and_same_target_is_noop(core_env):
+def test_gripper_stops_when_blocked_and_same_target_is_noop(core_env):
+    """被挡住（有阻力 / 到限位）→ 半力保持停手；同一目标不反复顶，换目标才继续。
+
+    与旧行为（一超 1N·m 立刻退回）的区别：判定带 0.15~0.6s 去抖，
+    避免正常行程里的力矩尖峰误触发；停手后保留一半夹持力（自锁机构能抱住东西）。
+    """
     core = _make_core(core_env)
-    core.update_feedback(core.q_cmd, None, grip_pos=0.10, grip_tau=2.0)   # 阻力
-    core.set_gripper_target(0.0)
-    core.step(DT, core.q_cmd.copy())
-    assert abs(core.grip_cmd - 0.10) < 1e-9, "力矩超限应退回实测位置并停止"
-    assert "阻力" in core.grip_msg or "限位" in core.grip_msg
-    core.set_gripper_target(0.0)                 # 同一手势不会反复顶
-    assert abs(core.grip_cmd - 0.10) < 1e-9
-    core.set_gripper_target(1.0)                 # 换行程才继续
-    assert core.grip_cmd > 0.10
+    core.set_gripper_target(0.0)                 # 握拳 → 闭合行程
+    blocked_at = 2.0                             # 测试用实测位置：行程中段（≈118°）
+    for _ in range(30):                          # 模拟"夹住东西/顶到限位"：实测卡住 + 力矩 2N·m
+        core.update_feedback(core.q_cmd, None, grip_pos=blocked_at, grip_tau=2.0)
+        core.step(DT, core.q_cmd.copy())
+    assert core.grip_blocked, "挡住后应停手"
+    assert "阻力" in core.grip_msg or "限位" in core.grip_msg, core.grip_msg
+    hold = core.grip_cmd
+    assert abs(hold - core.grip_hold_pos(-1.0)) < 1e-9, "应退到半力保持点"
+    assert hold < blocked_at, "保持点应留在实测位置外侧（保留夹持力）"
+
+    core.set_gripper_target(0.0)                 # 同一手势：不重复顶
+    for _ in range(50):
+        core.update_feedback(core.q_cmd, None, grip_pos=blocked_at, grip_tau=2.0)
+        core.step(DT, core.q_cmd.copy())
+    assert abs(core.grip_cmd - hold) < 1e-9, f"同一目标不应继续顶（{core.grip_cmd}）"
+
+    core.set_gripper_target(1.0)                 # 换行程（张开手）→ 反向继续
+    assert core.grip_cmd > blocked_at
+    assert not core.grip_blocked, "换目标应解除挡住标记"
 
 
 class _FakeRecognizer:

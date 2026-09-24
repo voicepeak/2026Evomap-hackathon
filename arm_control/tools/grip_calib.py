@@ -3,21 +3,29 @@
 慢速单向推进，实时打印 位置 / 目标 / 力矩；遇阻力（力矩超阈值）自动停。
 行程、速度、方向都可命令行给。
 
-用法:
-    uv run python tools/grip_calib.py --dir +1 --speed 0.5 --max-travel 20
-    uv run python tools/grip_calib.py --dir -1 --speed 0.5 --max-travel 20
-    uv run python tools/grip_calib.py --dir +1 --release   # 只失能，不驱动
+用法（本工作区；注意先停掉采集服务，别两边抢机械臂）:
+    cd <工作区根>
+    capture_platform/.venv/bin/python arm_control/tools/grip_calib.py --dir +1 --speed 0.5 --max-travel 6
+    capture_platform/.venv/bin/python arm_control/tools/grip_calib.py --dir -1 --speed 0.5 --max-travel 6
+    capture_platform/.venv/bin/python arm_control/tools/grip_calib.py --dir +1 --release   # 只失能，不驱动
+
+打印的"停止位置"就是这台的机械端（到限位时力矩会超过 --tau-limit）；
+把它填进 capture_platform/configs/rebot_b601_rs.json 的 gripper.lo_deg / hi_deg
+（留 5~10° 余量），夹爪的程序可用行程就跟真机对齐了。
 """
 from __future__ import annotations
 
 import argparse
 import math
+import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
-REPO = "/Users/Admin/Desktop/reBotArm_control_py"
+# 本仓库根（arm_control/）：默认就指向本文件所在仓库，可用环境变量覆盖
+REPO = os.environ.get("REBOT_ARM_REPO") or str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, REPO)
 
 from reBotArm_control_py.actuator import RebotArm  # noqa: E402

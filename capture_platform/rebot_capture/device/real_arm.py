@@ -20,19 +20,32 @@ from ..integrations.rebotarm import RebotArmRepo
 from .backends import ArmStatus, BackendError, JointState, now
 from .profile import DeviceProfile
 
-# ── 上游已验证常量（spatial_teleop.py） ──────────────────────────────
+# ── 上游已验证常量（spatial_teleop.py）+ 平台夹爪力控 ──────────────
 GRIP_KP = 20.0
 GRIP_KD = 2.0
 GRIP_RATE = 1.20                    # rad/s（约 69°/s）
-GRIP_LO = math.radians(3.0)         # 程序可用下界
-GRIP_HI = math.radians(328.0)       # 程序可用上界
-GRIP_TAU_LIMIT = 1.0
-GRIP_RECOVER_ERR = math.radians(15.0)   # 命令与实测偏差超过它 + 无力矩 → 认为电机掉了使能
+GRIP_LO = math.radians(3.0)         # 程序可用下界（可被机型配置 gripper.lo_deg 覆盖）
+GRIP_HI = math.radians(328.0)       # 程序可用上界（可被机型配置 gripper.hi_deg 覆盖）
+GRIP_TAU_LIMIT = 2.0                # N·m：与 teleop_core.CoreArgs.grip_tau_limit 对齐
+GRIP_ERR_MAX = GRIP_TAU_LIMIT / GRIP_KP   # 0.1 rad：偏差 × kp = 力矩 → 夹住偏差就限住了力矩
+GRIP_RECOVER_ERR = math.radians(15.0)   # 命令与实测偏差超过它 + 无力矩 → 认为电机掉了使能/锁存故障
 GRIP_RECOVER_WAIT = 2.0                 # 持续这么久才自愈
 GRIP_RECOVER_COOLDOWN = 5.0             # 自愈重试间隔                # N·m
 PARK_RATE = 0.25                    # rad/s
 START_GATE_RAD = 0.05
 DISABLE_GATE_RAD = 0.05
+
+
+def grip_force_limited(desired: float, held: float, lo: float, hi: float,
+                       err_max: float = GRIP_ERR_MAX) -> float:
+    """夹爪实际下发值：只允许比实测位置超前/落后 err_max。
+
+    位置环里 `tau ≈ kp·(目标−实测)`，所以把偏差夹住 = 把力矩夹住：
+    到限位或夹住东西时，目标不会越积越远，电机不会顶着几十 N·m 堵转。
+    （RobStride 堵转后可能锁存故障：位置不跟随、iq=0，整个夹爪"死掉"。）
+    """
+    err = float(np.clip(float(desired) - float(held), -abs(float(err_max)), abs(float(err_max))))
+    return float(np.clip(float(held) + err, float(lo), float(hi)))
 
 
 class RealArm:
@@ -51,6 +64,13 @@ class RealArm:
         self.limit_margin_deg = limit_margin_deg
         self.allow_nonzero_start = allow_nonzero_start
         self.fps = fps
+        # 夹爪可用行程/力矩/速度（机型配置可改；与 teleop_core.CoreArgs.grip_* 保持一致）
+        gp = profile.gripper
+        self._g_lo = math.radians(float(getattr(gp, "lo_deg", 3.0)))
+        self._g_hi = math.radians(float(getattr(gp, "hi_deg", 328.0)))
+        self._g_tau_limit = float(getattr(gp, "tau_limit", GRIP_TAU_LIMIT))
+        self._g_err_max = self._g_tau_limit / max(GRIP_KP, 1e-6)
+        self._g_rate = float(getattr(gp, "rate", GRIP_RATE))
 
         self._arm = None
         self._model = None
@@ -142,10 +162,16 @@ class RealArm:
                 grip = {
                     "group": gg,
                     "send": gpos,
+                    "sent": gpos,
                     "held": gpos,
                     "last": time.monotonic(),
                     "tau": 0.0,
                 }
+                # 上次若是异常退出（堵转/失能），先把故障锁存清掉，保证一上来就是活的
+                try:
+                    self._grip_recover(grip)      # clear_error + mode_mit + enable（幂等）
+                except Exception:  # noqa: BLE001
+                    pass
             except Exception:  # noqa: BLE001
                 grip = None
 
@@ -166,7 +192,7 @@ class RealArm:
         pos, vel, torq = self._arm.get_state()
         pos = np.asarray(pos, float)
         grip_rad = float(pos[6]) if pos.size > 6 else 0.0
-        grip_norm = (grip_rad - GRIP_LO) / max(1e-6, GRIP_HI - GRIP_LO)
+        grip_norm = (grip_rad - self._g_lo) / max(1e-6, self._g_hi - self._g_lo)
         if self._grip is not None:
             self._grip["held"] = grip_rad
         return JointState(
@@ -201,39 +227,82 @@ class RealArm:
         g["last"] = t
 
         frac = float(np.clip(frac, 0.0, 1.0))
-        target = GRIP_LO + frac * (GRIP_HI - GRIP_LO)
-        step = GRIP_RATE * 1.5 * dt
-        g["send"] = float(np.clip(g["send"] + float(np.clip(target - g["send"], -step, step)), GRIP_LO, GRIP_HI))
+        target = self._g_lo + frac * (self._g_hi - self._g_lo)
+        step = self._g_rate * dt
+        g["send"] = float(np.clip(g["send"] + float(np.clip(target - g["send"], -step, step)),
+                                  self._g_lo, self._g_hi))
+        self._send_gripper(g, g["send"])
 
+    # ------------------------------------------------------------------ #
+    def _send_gripper(self, g: dict, desired: float) -> None:
+        """按"限偏差"下发夹爪（力矩有上限），并读力矩、做自愈。"""
+        sent = grip_force_limited(desired, g["held"], self._g_lo, self._g_hi, self._g_err_max)
+        g["sent"] = sent
         g["group"].send_mit(
-            np.array([g["send"]]),
+            np.array([sent]),
             vel=np.zeros(1),
             kp=np.array([GRIP_KP]),
             kd=np.array([GRIP_KD]),
             tau=np.zeros(1),
         )
-
-        # 力矩保护：超过阈值 → 目标回退到实测位置（不再顶住）
         try:
             tau_all = np.asarray(self._arm.get_state(request_feedback=False)[2], float)
             g["tau"] = float(tau_all[-1]) if tau_all.size else 0.0
         except Exception:  # noqa: BLE001
             g["tau"] = 0.0
-        if abs(g["tau"]) > GRIP_TAU_LIMIT:
-            g["send"] = float(g["held"])
+        # 自愈：命令与实测长期偏差大、但几乎没有力矩 → 电机多半掉了使能或者被锁存故障
+        # （RobStride 堵转/写参数后可能锁存：位置不跟随、iq=0）。先 clear_error 再使能。
+        # 力矩大时不触发，避免"顶住东西还反复使能硬顶"。
+        err = abs(float(desired) - float(g["held"]))
+        t_g = time.monotonic()
+        if err > GRIP_RECOVER_ERR and abs(g["tau"]) < 0.2:
+            g["stuck_since"] = g.get("stuck_since") or t_g
+            if t_g - g["stuck_since"] > GRIP_RECOVER_WAIT and t_g - g.get("recover_at", 0.0) > GRIP_RECOVER_COOLDOWN:
+                try:
+                    self._grip_recover(g)
+                    g["recover_at"] = t_g
+                    g["stuck_since"] = None
+                    print(f"[grip] 夹爪未跟随（偏差 {math.degrees(err):.0f}°，力矩≈0）→ "
+                          f"clear_error + 重新使能", flush=True)
+                except Exception:  # noqa: BLE001
+                    pass
+        else:
+            g["stuck_since"] = None
+
+    def _grip_recover(self, g: dict) -> None:
+        """清故障锁存 + 回到 MIT + 使能（夹爪这一路，不动机械臂）。"""
+        group = g.get("group")
+        if group is None:
+            return
+        motors = getattr(group, "_mm", {}) or {}
+        for name in list(getattr(group, "_jn", []) or []):
+            mot = motors.get(name)
+            if mot is not None:
+                try:
+                    mot.clear_error()
+                except Exception:  # noqa: BLE001
+                    pass
+        group.mode_mit()
+        group.enable()
 
     # ------------------------------------------------------------------ #
     def grip_target(self) -> float:
-        """返回最近实际下发的归一化夹爪目标，供动作录制使用。"""
+        """返回最近下发的归一化夹爪目标，供动作录制使用。"""
         if self._grip is None:
             return 0.0
-        return float(np.clip((self._grip["send"] - GRIP_LO) / (GRIP_HI - GRIP_LO), 0.0, 1.0))
+        return float(np.clip((self._grip["send"] - self._g_lo) / (self._g_hi - self._g_lo), 0.0, 1.0))
 
     def grip_rad(self) -> float:
         """夹爪绝对角度（rad，上游 teleop_core 的坐标）。"""
         if self._grip is None:
             return 0.0
         return float(self._grip["held"])
+
+    def grip_tau(self) -> float:
+        """夹爪电机力矩（N·m）——给 teleop_core 的夹爪力控用。"""
+        if self._grip is None:
+            return 0.0
+        return float(self._grip.get("tau", 0.0))
 
     def send_mit(self, q6, kp, kd, tau, grip_rad: float | None = None) -> None:
         """原始 MIT 下发（teleop_core 路径）：core 已做限速/积分，这里只做软限位与发送。"""
@@ -251,40 +320,8 @@ class RealArm:
         if grip_rad is None or self._grip is None:
             return
         g = self._grip
-        g["send"] = float(np.clip(float(grip_rad), GRIP_LO, GRIP_HI))
-        g["group"].send_mit(
-            np.array([g["send"]]),
-            vel=np.zeros(1),
-            kp=np.array([GRIP_KP]),
-            kd=np.array([GRIP_KD]),
-            tau=np.zeros(1),
-        )
-        try:
-            tau_all = np.asarray(self._arm.get_state(request_feedback=False)[2], float)
-            g["tau"] = float(tau_all[-1]) if tau_all.size else 0.0
-        except Exception:  # noqa: BLE001
-            g["tau"] = 0.0
-        if abs(g["tau"]) > GRIP_TAU_LIMIT:
-            g["send"] = float(g["held"])  # 力矩保护：目标回退到实测（与上游一致）
-
-        # 自愈：命令与实测长期偏差大、但几乎没有力矩 → 电机多半被保护性失能了，
-        # 重新 mode_mit + enable（不追加力矩；到位后会自然跟随）。力矩大时不触发，
-        # 避免"顶住东西还反复使能硬顶"。
-        err = abs(float(g["send"]) - float(g["held"]))
-        t_g = time.monotonic()
-        if err > GRIP_RECOVER_ERR and abs(g["tau"]) < 0.2:
-            g["stuck_since"] = g.get("stuck_since") or t_g
-            if t_g - g["stuck_since"] > GRIP_RECOVER_WAIT and t_g - g.get("recover_at", 0.0) > GRIP_RECOVER_COOLDOWN:
-                try:
-                    g["group"].mode_mit()
-                    g["group"].enable()
-                    g["recover_at"] = t_g
-                    g["stuck_since"] = None
-                    print(f"[grip] 夹爪未跟随（偏差 {math.degrees(err):.0f}°，力矩≈0）→ 已重新使能", flush=True)
-                except Exception:  # noqa: BLE001
-                    pass
-        else:
-            g["stuck_since"] = None
+        g["send"] = float(np.clip(float(grip_rad), self._g_lo, self._g_hi))   # 期望目标（记录/自愈用）
+        self._send_gripper(g, g["send"])
 
     # ================================================================== #
     def park(self, timeout: float = 25.0) -> None:

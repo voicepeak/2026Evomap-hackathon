@@ -4,14 +4,21 @@
     连接（会自动 clear_error，清掉锁存故障）→ 读位置 → 读故障/警告码
     → 用极软刚度(kp=5)轻推 ±0.05rad，看位置有没有跟随（判断电机/机构是否卡死）
 安全：力矩极小（最大 ~0.25 N·m），只动夹爪，不动机械臂。
+
+用法（本工作区；先停掉采集服务）:
+    cd <工作区根>
+    capture_platform/.venv/bin/python arm_control/tools/grip_check.py
 """
 import math
+import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
-REPO = "/Users/Admin/Desktop/reBotArm_control_py"
+# 本仓库根（arm_control/）：默认就指向本文件所在仓库，可用环境变量覆盖
+REPO = os.environ.get("REBOT_ARM_REPO") or str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, REPO)
 
 from reBotArm_control_py.actuator import RebotArm  # noqa: E402

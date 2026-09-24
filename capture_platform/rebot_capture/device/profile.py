@@ -30,6 +30,10 @@ class GripperProfile:
     model: str = "rs-00"
     force_ratio: float = 0.07
     travel_m: float = 0.0715
+    lo_deg: float = 3.0      # 程序可用下界（度）；机械下端 −11.9°，留余量
+    hi_deg: float = 328.0    # 程序可用上界（度）；机械上端 +335.4°，留余量
+    tau_limit: float = 2.0   # 电机力矩上限（N·m）：到它就判定"到限位/有阻力"并停手
+    rate: float = 1.2        # 行程速度（rad/s，约 69°/s）
 
 
 @dataclass
@@ -80,6 +84,10 @@ class DeviceProfile:
                 model=g.get("model", "rs-00"),
                 force_ratio=float(g.get("force_ratio", 0.07)),
                 travel_m=float(g.get("travel_m", 0.0715)),
+                lo_deg=float(g.get("lo_deg", 3.0)),
+                hi_deg=float(g.get("hi_deg", 328.0)),
+                tau_limit=float(g.get("tau_limit", 2.0)),
+                rate=float(g.get("rate", 1.2)),
             ),
             notes=list(raw.get("notes", [])),
         )
@@ -121,6 +129,10 @@ class DeviceProfile:
                 "can_id": self.gripper.motor_id,
                 "model": self.gripper.model,
                 "force_ratio": self.gripper.force_ratio,
+                "lo_deg": self.gripper.lo_deg,
+                "hi_deg": self.gripper.hi_deg,
+                "tau_limit": self.gripper.tau_limit,
+                "rate": self.gripper.rate,
             },
             "can": dict(self.can),
             "control_mode": self.control_mode,
@@ -150,6 +162,10 @@ class DeviceProfile:
                 "motor_id": self.gripper.motor_id,
                 "model": self.gripper.model,
                 "force_ratio": self.gripper.force_ratio,
+                "lo_deg": self.gripper.lo_deg,
+                "hi_deg": self.gripper.hi_deg,
+                "tau_limit": self.gripper.tau_limit,
+                "rate": self.gripper.rate,
             },
             "notes": self.notes,
         }
