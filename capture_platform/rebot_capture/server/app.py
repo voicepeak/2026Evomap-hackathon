@@ -10,6 +10,9 @@ import asyncio
 import dataclasses
 import json
 import logging
+import os
+import signal
+import threading
 import time
 from pathlib import Path
 
@@ -41,6 +44,7 @@ from .schemas import (
     PresetIn,
     ReplayIn,
     SessionStartIn,
+    ShutdownIn,
     SpeedIn,
     TauLimitIn,
     TwistIn,
@@ -217,6 +221,34 @@ def create_app(
     def device_park() -> dict:
         service.park()
         return {"ok": True, "park": True}
+
+    @app.post("/api/shutdown")
+    def shutdown(body: ShutdownIn) -> dict:
+        """一键安全关闭：回零 → 失能 → 退出采集服务进程（界面上的「关闭」按钮）。
+
+        先返回响应，再由后台线程让进程退出；如果优雅退出被浏览器连接挂住，
+        3 秒后强制退出（此时机械臂已经归零并失能，硬退也不会掉）。
+        """
+        result = service.shutdown_sequence(disable=body.disable)
+        if body.exit_process:
+            def _bye() -> None:
+                time.sleep(0.6)
+                try:
+                    service.stop_loop()
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    service.backend.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    os.kill(os.getpid(), signal.SIGINT)
+                except Exception:  # noqa: BLE001
+                    pass
+                time.sleep(3.0)                     # 优雅退出没走完就当它卡住了
+                os._exit(0)
+            threading.Thread(target=_bye, name="shutdown", daemon=True).start()
+        return {"ok": True, **result, "exiting": bool(body.exit_process)}
 
     @app.post("/api/replay")
     def replay(body: ReplayIn) -> dict:

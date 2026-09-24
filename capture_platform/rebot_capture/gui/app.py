@@ -515,6 +515,34 @@ class MainWindow(QMainWindow):
         self.set_status("回零中…（请勿触碰机械臂）")
         self._call("/api/device/park", {}, "已回零并保持悬停")
 
+    def do_shutdown(self) -> None:
+        """一键安全关闭：回零 → 失能 → 退出采集服务（本界面随之关闭）。"""
+        if QMessageBox.warning(
+            self, "关闭程序",
+            "确认关闭？会按顺序执行：\n"
+            "1) 平滑回零（机械臂会缓慢回到折叠零位）\n"
+            "2) 全部电机失能（保持零位，不下落）\n"
+            "3) 退出采集服务进程，本界面随后自动关闭",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        self.set_status("关闭中：回零 → 失能 → 退出…（请勿触碰机械臂）")
+
+        def done(res: Any) -> None:
+            if isinstance(res, ApiError):
+                self.set_status(f"关闭失败：{res.detail}（机械臂仍在保持）", error=True)
+                return
+            park = (res or {}).get("park") or {}
+            dis = (res or {}).get("disable") or {}
+            park_ok = bool(park.get("ok", True))
+            dis_ok = bool(dis.get("ok"))
+            txt = ("已回零" if park_ok else "回零未完成") + ("，已失能" if dis_ok else "，失能未确认")
+            self.set_status(txt + "；服务正在退出，界面 2 秒后关闭")
+            QTimer.singleShot(2000, self.close)
+
+        self._call("/api/shutdown", {"disable": True, "exit_process": True}, "", done=done)
+
     def do_replay(self, speed: float) -> None:
         self._replay(speed, dataset_path=None, index=None, label=None)
 

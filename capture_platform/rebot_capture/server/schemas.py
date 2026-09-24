@@ -69,6 +69,11 @@ class MotorIn(BaseModel):
                       description="index 省略时用：+1 下一个 / −1 上一个（服务端按自己的状态算）")
 
 
+class ShutdownIn(BaseModel):
+    disable: bool = Field(True, description="回零后是否失能（推荐 True）")
+    exit_process: bool = Field(True, description="顺手退出采集服务进程")
+
+
 class GestureIn(BaseModel):
     on: bool | None = Field(None, description="True=启用手势夹爪，False=停用，省略=查询当前状态")
 

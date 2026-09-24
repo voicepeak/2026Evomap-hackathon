@@ -5,30 +5,10 @@
 每次单击都发同一个 index，看起来就是切不动。
 现在 `POST /api/teleop/motor {step:+1}` / `POST /api/teleop/joint {step:±1}`
 由服务端按自己的选择循环；客户端只用返回值显示提示。
+（`core_service` fixture 在 conftest.py 里，共享给别的用例。）
 """
 import numpy as np
-import pytest
-
-from rebot_capture.device.mock_arm import MockArm
-from rebot_capture.device.profile import DeviceProfile
-from rebot_capture.recorder.session import CaptureService
-from rebot_capture.teleop.rebot_core import RebotCoreMapper
-
-
-@pytest.fixture()
-def core_service(core_env):
-    """真 teleop_core + MockArm（不接硬件、不开控制线程）。"""
-    repo = core_env[0]
-    profile = DeviceProfile.load()
-    arm = MockArm(profile)
-    mapper = RebotCoreMapper(profile, repo=repo)
-    service = CaptureService(profile, arm, mapper=mapper)
-    service.connect()
-    yield service
-    try:
-        service.stop_loop()
-    except Exception:  # noqa: BLE001
-        pass
+import pytest  # noqa: F401  （fixture 需要）
 
 
 def test_motor_cycle_is_server_side(core_service):

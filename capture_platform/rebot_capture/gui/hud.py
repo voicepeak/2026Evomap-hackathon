@@ -97,6 +97,10 @@ class TeleopView(QWidget):
         self.b_park = button("回零", kind="ghost", tip="平滑回到折叠零位（保持悬停）")
         self.b_park.clicked.connect(mw.do_park)
         bc_lay.addWidget(self.b_park)
+        self.b_shutdown = button("关闭", kind="danger",
+                                 tip="一键安全关闭：回零 → 失能 → 退出程序（会先确认）")
+        self.b_shutdown.clicked.connect(mw.do_shutdown)
+        bc_lay.addWidget(self.b_shutdown)
 
         # ── 右下：录制 ──────────────────────────────────────────
         self.br = QFrame(self)

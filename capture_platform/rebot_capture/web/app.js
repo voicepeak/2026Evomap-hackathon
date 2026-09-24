@@ -644,6 +644,33 @@ function setupControls() {
     } catch (e) { alert("回零失败：" + e.message); }
   };
 
+  const shutdownBtn = $("btn-shutdown");
+  if (shutdownBtn) shutdownBtn.onclick = async () => {
+    if (!confirm("确认关闭？会按顺序执行：\n1) 平滑回零（机械臂缓慢回到折叠零位）\n"
+                 + "2) 全部电机失能（保持零位，不下落）\n3) 退出采集服务进程")) return;
+    shutdownBtn.disabled = true;
+    shutdownBtn.textContent = "关闭中…";
+    setDot?.("warn");
+    let res = null;
+    try {
+      res = await postJSON("/api/shutdown", { disable: true, exit_process: true });
+    } catch (_) {
+      /* 服务可能先断开连接再回响应：按"已关闭"处理 */
+    }
+    const park = res?.park ?? {};
+    const dis = res?.disable ?? {};
+    const okPark = park.ok !== false;
+    const okDis = dis.ok === true || res === null;
+    document.body.innerHTML =
+      `<div style="padding:48px;font:16px/1.8 -apple-system,'PingFang SC',sans-serif">`
+      + `<h2>采集服务已关闭</h2>`
+      + `<p>回零：${okPark ? "✅ 已回零（保持零位）" : "⚠️ " + (park.reason || "未完成")}</p>`
+      + `<p>失能：${okDis ? "✅ 全部电机已失能" : "⚠️ " + (dis.reason || "未确认")}`
+      + (okDis ? "" : "（机械臂仍会保持当前位置，不会掉落）") + `</p>`
+      + `<p class="muted">可以直接关掉这个页面；再启动请双击 capture_platform/scripts/run_gui.command（或 run_serve.command）。</p>`
+      + `</div>`;
+  };
+
   const doReplay = async (speed) => {
     $("replay-status").textContent = `${speed}× 回放中…（按 Space 可中止）`;
     try {

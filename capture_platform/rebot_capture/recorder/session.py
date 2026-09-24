@@ -627,6 +627,27 @@ class CaptureService:
         self._sync_mapper_to_measured()
         return {"ok": not aborted, "aborted": aborted, "steps": steps}
 
+    # ================================================================== #
+    # 一键关闭：回零 → 失能 → （由服务层）退出进程
+    # ================================================================== #
+    def shutdown_sequence(self, disable: bool = True) -> dict:
+        """安全关闭序列：先平滑归零，再失能（真机有"必须在零位附近"的门）。
+
+        不做退出动作（那是服务层的责任）；返回每步结果，便于界面显示失败原因。
+        """
+        out: dict[str, Any] = {"park": None, "disable": None}
+        try:
+            out["park"] = self.park()
+        except Exception as e:  # noqa: BLE001
+            out["park"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+        if disable:
+            try:
+                self.backend.disable()          # 真机：非零位会被门拒绝（照实返回）
+                out["disable"] = {"ok": True}
+            except Exception as e:  # noqa: BLE001
+                out["disable"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+        return out
+
     def goto_smooth(self, target: np.ndarray, duration: float | None = None, tau_abort: float = 25.0) -> dict:
         """限时平滑 goto：与上游"姿势预设/回放"同样的最小 jerk 曲线。
 

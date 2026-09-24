@@ -12,6 +12,7 @@ Base URL：`http://127.0.0.1:8787`
 | GET | `/api/device/diagnostics` | 真机诊断（后端 + 映射器：q_cmd/v_cmd/qd/限位/夹爪） | — |
 | POST | `/api/device/goto` | 把机械臂开到指定姿态（7 维，warmup，不计入数据） | `{target:[7], seconds?:1.2}` |
 | POST | `/api/device/park` | 回折叠零位（最小 jerk，保持悬停） | `{}` |
+| POST | `/api/shutdown` | **一键安全关闭**：回零 → 失能 → 退出采集服务进程 | `{disable?: true, exit_process?: true}`（默认都开） |
 | GET | `/api/teleop/state` | 控制核心状态（模式/冻结/速度档/直控/夹爪/预设/告警） | — |
 | POST | `/api/teleop/freeze` | 冻结/解冻 | `{on?: bool}`（省略=切换） |
 | POST | `/api/teleop/speed` | 速度档 慢/中/快 | `{index?: 0|1|2}`（省略=循环） |
