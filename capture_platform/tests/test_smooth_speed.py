@@ -29,6 +29,8 @@ def _core(core_env):
 
 def _run(core, n, vel=None):
     for _ in range(n):
+        if core.pressed:
+            core.set_pen(*core.pen, True)   # 客户端 50Hz 重发；机器忙时别触发 0.4s 笔超时
         core.step(DT, core.q_cmd.copy(), vel_meas=vel)
 
 

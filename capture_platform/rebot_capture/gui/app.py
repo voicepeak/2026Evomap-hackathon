@@ -188,8 +188,9 @@ class MainWindow(QMainWindow):
             ("H", self.toggle_float),
             ("R", lambda: self.post_teleop("align")),
             ("Esc", lambda: self.post_teleop("freeze", {"on": True})),
-            ("[", lambda: self.select_motor(((self._live.get("teleop") or {}).get("joint_index", 3) - 1) % 7)),
-            ("]", lambda: self.select_motor(((self._live.get("teleop") or {}).get("joint_index", 3) + 1) % 7)),
+            ("[", lambda: self.post_teleop("motor", {"step": -1})),
+            ("]", lambda: self.post_teleop("motor", {"step": 1})),
+            ("G", lambda: self.post_teleop("motor", {"index": 6})),   # 直接选夹爪
             (",", lambda: self.post_teleop("twist", {"value": -0.611})),
             (".", lambda: self.post_teleop("twist", {"value": 0.611})),
             ("Tab", self.toggle_panel),
@@ -425,8 +426,21 @@ class MainWindow(QMainWindow):
             self._call("/api/teleop/joint", payload or {}, "关节直控")
         elif cmd == "twist":
             self._call("/api/teleop/twist", payload or {}, "自转指令")
+        elif cmd == "motor":
+            # 选电机/循环：提示用**服务端返回的** joint_index（客户端状态过期也不会显示错）
+            self._call("/api/teleop/motor", payload or {}, "", done=self._after_motor)
         else:
             self._call(f"/api/teleop/{cmd}", payload or {}, "已发送")
+
+    def _after_motor(self, res: Any) -> None:
+        from .hud import MOTOR_LABELS
+        if isinstance(res, ApiError):
+            self.set_status("选电机失败：" + res.detail, error=True)
+            return
+        i = int(res.get("joint_index", -1)) if isinstance(res, dict) else -1
+        label = MOTOR_LABELS[i] if 0 <= i < len(MOTOR_LABELS) else str(i)
+        self.teleop.pad.toast("电机 " + label)
+        self.set_status("电机 " + label)
 
     def toggle_mode(self) -> None:
         t = self._live.get("teleop") or {}
@@ -442,15 +456,11 @@ class MainWindow(QMainWindow):
         self.post_teleop("float", {"on": not t.get("float")})
 
     def cycle_motor(self) -> None:
-        t = self._live.get("teleop") or {}
-        cur = int(t.get("joint_index", 3))
-        self.select_motor((cur + 1) % 7)
+        """笔侧键单击：下一个电机（交给服务端循环，客户端状态过期也不会卡住）。"""
+        self.post_teleop("motor", {"step": 1})
 
     def select_motor(self, index: int) -> None:
-        from .hud import MOTOR_LABELS
-        label = "电机 " + (MOTOR_LABELS[index] if 0 <= index < len(MOTOR_LABELS) else str(index))
-        self.teleop.pad.toast(label)
-        self._call("/api/teleop/motor", {"index": index}, label)
+        self.post_teleop("motor", {"index": int(index)})
 
     def toggle_gesture(self) -> None:
         g = self._live.get("gesture")

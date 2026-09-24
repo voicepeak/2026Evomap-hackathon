@@ -24,6 +24,8 @@ def _drag(core, steps, x=0.0, y=0.0):
     core.set_pen(0.0, 0.0, True)
     core.set_pen(x, y, True)
     for _ in range(steps):
+        if core.pressed:
+            core.set_pen(x, y, True)     # 客户端本来 50Hz 重发；机器忙时也别触发 0.4s 笔超时
         core.step(DT, core.q_cmd.copy())
 
 

@@ -40,6 +40,8 @@ def _make_core(core_env):
 
 
 def _step(core, grip_pos=GL, grip_tau=0.0):
+    if core.pressed:
+        core.set_pen(*core.pen, True)       # 客户端 50Hz 重发；机器忙时别触发 0.4s 笔超时
     core.update_feedback(core.q_cmd, None, grip_pos=grip_pos, grip_tau=grip_tau)
     return core.step(DT, core.q_cmd.copy())
 

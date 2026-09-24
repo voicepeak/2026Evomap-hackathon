@@ -196,11 +196,12 @@ async function toggleCartesianMode() {
 }
 
 async function cycleMotor() {
-  const t = state.live?.teleop || {};
-  const cur = Number.isInteger(t.joint_index) ? t.joint_index : 3;
-  const next = (cur + 1) % 7;
-  padToast(`电机 ${MOTOR_LABELS[next]}`);
-  try { await postJSON("/api/teleop/motor", { index: next }); } catch (_) {}
+  // 交给服务端循环：客户端的 joint_index 万一没刷新，也不会一直发同一个电机
+  try {
+    const res = await postJSON("/api/teleop/motor", { step: 1 });
+    const i = Number(res?.joint_index);
+    if (Number.isInteger(i)) padToast(`电机 ${MOTOR_LABELS[i]}`);
+  } catch (_) {}
 }
 
 /* 控制端整屏：首次触板自动进入，另有按钮可切换 */
@@ -406,10 +407,11 @@ function teleopKeys() {  const S = () => state.live?.teleop || {};
       case "KeyO": await toggleCartesianMode(); break;
       case "KeyH": await postJSON("/api/teleop/float", { on: !t.float }); break;
       case "KeyR": await postJSON("/api/teleop/align", {}); break;
+      case "KeyG": await postJSON("/api/teleop/motor", { index: 6 }); break;   // 直接选夹爪
       case "KeyQ": await postJSON("/api/teleop/joint", { hold: JRATE }); break;
       case "KeyA": await postJSON("/api/teleop/joint", { hold: -JRATE }); break;
-      case "BracketLeft": await postJSON("/api/teleop/joint", { index: ((t.joint_index ?? 3) + 6) % 7 }); break;
-      case "BracketRight": await postJSON("/api/teleop/joint", { index: ((t.joint_index ?? 3) + 1) % 7 }); break;
+      case "BracketLeft": await postJSON("/api/teleop/joint", { step: -1 }); break;
+      case "BracketRight": await postJSON("/api/teleop/joint", { step: 1 }); break;
       case "Comma": await postJSON("/api/teleop/twist", { value: -TW }); break;
       case "Period": await postJSON("/api/teleop/twist", { value: TW }); break;
       case "Escape": await postJSON("/api/teleop/freeze", { on: true }); break;
@@ -470,7 +472,7 @@ function setupPad() {
     state.wsTeleop.send(JSON.stringify({ type: "pen", data: state.lastSample }));
   }, 20);
 
-  // 笔右键（不区分悬空/落笔）：单击 = 切换电机，长按 = 切换模式
+  // 笔右键（不区分悬空/落笔）：单击 = 下一个电机（服务端循环），长按 = 切换模式；按 G = 直接选夹爪
   const RIGHT_HOLD_MS = 500;
   let rightTimer = null;
   let rightLongFired = false;

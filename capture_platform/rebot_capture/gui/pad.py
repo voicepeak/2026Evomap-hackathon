@@ -4,7 +4,8 @@
 - 落笔（左键按下 / 笔尖接触）→ 发送 touching=True 的样本
 - 移动 → 持续发送；抬笔 → 发送 touching=False（保持悬停目标）
 - 落笔期间 50Hz 重发最新样本（服务端 0.4s 无输入视为抬笔）
-- 右键：单击 = 切换电机，长按 ≈0.5s = 切换 位置/姿态
+- 右键：单击 = 下一个电机（服务端循环，客户端状态过期也不会卡），长按 ≈0.5s = 切换 位置/姿态
+- 键盘 G = 直接选中夹爪（不用循环）；[ / ] = 上一个 / 下一个电机
 """
 from __future__ import annotations
 
@@ -153,7 +154,7 @@ class PenPad(QWidget):
                    "笔尖落笔 = 运动控制　·　抬笔 = 悬停")
         p.setFont(theme.ui(11))
         p.drawText(QRectF(0, h - 100, w, 18), int(Qt.AlignmentFlag.AlignHCenter),
-                   "笔右键：单击 = 切换电机（J1…J6 / 夹爪）　长按 = 切换 位置 / 姿态")
+                   "笔右键：单击 = 下一个电机（J1…J6 / 夹爪）　长按 = 切换 位置 / 姿态　按 G = 直接选夹爪")
 
         # 中央提示（切换时短暂显示）
         if self._toast and time.monotonic() < self._toast_until:

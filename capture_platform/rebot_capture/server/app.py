@@ -281,11 +281,11 @@ def create_app(
 
     @app.post("/api/teleop/joint")
     def teleop_joint(body: JointIn) -> dict:
-        return _core_guard(service.teleop_joint, body.index, body.hold)
+        return _core_guard(service.teleop_joint, body.index, body.hold, body.step)
 
     @app.post("/api/teleop/motor")
     def teleop_motor(body: MotorIn) -> dict:
-        return _core_guard(service.teleop_motor, body.index)
+        return _core_guard(service.teleop_motor, body.index, body.step)
 
     @app.post("/api/teleop/align")
     def teleop_align() -> dict:

@@ -110,20 +110,24 @@ def test_pen_left_right_drives_gripper(core_env):
     core.select_motor(6)
     base = core.grip_cmd
     pos = base
+
+    def step(x):
+        if core.pressed:
+            core.set_pen(x, 0.0, True)       # 客户端 50Hz 重发；别触发 0.4s 笔超时
+        pos2 = pos + float(np.clip(core.grip_send - pos, -0.02, 0.02))
+        core.update_feedback(core.q_cmd, None, grip_pos=pos2, grip_tau=0.3)
+        core.step(DT, core.q_cmd.copy())
+        return pos2
+
     core.set_pen(0.0, 0.0, True)
     core.set_pen(150.0, 0.0, True)           # 右划
     for _ in range(60):
-        pos = pos + float(np.clip(core.grip_send - pos, -0.02, 0.02))
-        core.update_feedback(core.q_cmd, None, grip_pos=pos, grip_tau=0.3)
-        core.step(DT, core.q_cmd.copy())
+        pos = step(150.0)
     assert core.grip_cmd > base + 1e-6, "右划应向张开方向走"
 
     down = core.grip_cmd
-    core.set_pen(-150.0, 0.0, True)          # 左划（锚点仍在原点）
     for _ in range(60):
-        pos = pos + float(np.clip(core.grip_send - pos, -0.02, 0.02))
-        core.update_feedback(core.q_cmd, None, grip_pos=pos, grip_tau=0.3)
-        core.step(DT, core.q_cmd.copy())
+        pos = step(-150.0)                   # 左划（锚点仍在原点）
     assert core.grip_cmd < down, "左划应向闭合方向走"
 
 

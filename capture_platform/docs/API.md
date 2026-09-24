@@ -17,8 +17,8 @@ Base URL：`http://127.0.0.1:8787`
 | POST | `/api/teleop/speed` | 速度档 慢/中/快 | `{index?: 0|1|2}`（省略=循环） |
 | POST | `/api/teleop/mode` | 位置/姿态模式 | `{mode: "pos"|"ori"}` |
 | POST | `/api/teleop/float` | 悬停（漂浮） | `{on: bool}` |
-| POST | `/api/teleop/joint` | 关节直控（按住）/选关节 | `{index?: 0-6, hold?: rad/s}` |
-| POST | `/api/teleop/motor` | 选中电机并进入笔控直控（笔侧键左键；笔上下/左右驱动） | `{index: 0-6}`（6=夹爪，暂不动作） |
+| POST | `/api/teleop/joint` | 关节直控（按住）/选关节 | `{index?: 0-6, step?: ±1, hold?: rad/s}`（`step`=服务端算上/下一个，不切模式） |
+| POST | `/api/teleop/motor` | 选中电机并进入笔控直控（笔侧键单击循环 / `G` 直接选夹爪） | `{index?: 0-6, step?: ±1}`（省略 index 且给 step = 从**服务端当前**选择循环；6=夹爪） |
 | POST | `/api/teleop/twist` | J6 自转速度 | `{value: rad/s}` |
 | POST | `/api/teleop/align` | 重新对齐 | `{}` |
 | POST | `/api/teleop/preset` | 预设 记录/前往 | `{action: "record"|"goto", index: 1-4}` |

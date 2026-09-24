@@ -16,12 +16,15 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
-REPO = "/Users/Admin/Desktop/reBotArm_control_py"
+# 本仓库根（arm_control/）：默认指向本文件所在仓库，可用环境变量覆盖
+REPO = os.environ.get("REBOT_ARM_REPO") or str(Path(__file__).resolve().parent)
 sys.path.insert(0, REPO)
 
 from reBotArm_control_py.actuator import RebotArm  # noqa: E402

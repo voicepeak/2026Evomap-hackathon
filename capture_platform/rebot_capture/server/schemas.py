@@ -57,11 +57,16 @@ class FloatIn(BaseModel):
 
 class JointIn(BaseModel):
     index: int | None = Field(None, ge=0, le=6)
+    step: int = Field(0, ge=-1, le=1,
+                      description="相对当前选择 ±1（服务端算；客户端状态过期也不会卡住）")
     hold: float | None = Field(None, description="关节直控速度 rad/s（0=松开）")
 
 
 class MotorIn(BaseModel):
-    index: int = Field(..., ge=0, le=6, description="0-5=J1-J6，6=夹爪；进入笔控直控模式")
+    index: int | None = Field(None, ge=0, le=6,
+                              description="0-5=J1-J6，6=夹爪；省略 = 按 step 从当前电机循环")
+    step: int = Field(1, ge=-1, le=1,
+                      description="index 省略时用：+1 下一个 / −1 上一个（服务端按自己的状态算）")
 
 
 class GestureIn(BaseModel):

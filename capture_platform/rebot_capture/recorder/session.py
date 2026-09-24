@@ -377,11 +377,18 @@ class CaptureService:
             m.set_mode(mode)
         return m.state()
 
-    def teleop_motor(self, index: int) -> dict:
-        """选中电机并进入笔控直控模式（等价点 J 按钮 / 笔左键）。"""
+    def teleop_motor(self, index: int | None = None, step: int = 1) -> dict:
+        """选中电机并进入笔控直控模式（等价点 J 按钮 / 笔侧键左键）。
+
+        `index=None` 时按 `step` 从**服务端当前**的选择循环（+1 = 下一个）：
+        客户端的"下一个是谁"如果因为状态没刷新而算错，就会一直发同一个电机、
+        看起来"切换不了"；交给服务端算就永远不会卡。
+        """
         m = self._require_core()
         with self._lock:
-            m.select_motor(index)
+            if index is None:
+                index = (int(m.core.j_sel) + int(step)) % 7
+            m.select_motor(int(index))
         return m.state()
 
     def teleop_float(self, on: bool) -> dict:
@@ -390,9 +397,13 @@ class CaptureService:
             m.set_float(bool(on))
         return m.state()
 
-    def teleop_joint(self, index: int | None = None, hold: float | None = None) -> dict:
+    def teleop_joint(self, index: int | None = None, hold: float | None = None,
+                     step: int = 0) -> dict:
+        """选关节（不改模式）/ 关节直控速度。`index=None, step=±1` = 服务端算上/下一个。"""
         m = self._require_core()
         with self._lock:
+            if index is None and step:
+                index = (int(m.core.j_sel) + int(step)) % 7
             if index is not None:
                 m.select_joint(int(index))
             if hold is not None:
