@@ -64,13 +64,16 @@ class RealArm:
         self.limit_margin_deg = limit_margin_deg
         self.allow_nonzero_start = allow_nonzero_start
         self.fps = fps
-        # 夹爪可用行程/力矩/速度（机型配置可改；与 teleop_core.CoreArgs.grip_* 保持一致）
+        # 夹爪可用行程/力矩/速度/方向（机型配置可改；与 teleop_core.CoreArgs.grip_* 一致）
         gp = profile.gripper
         self._g_lo = math.radians(float(getattr(gp, "lo_deg", 3.0)))
         self._g_hi = math.radians(float(getattr(gp, "hi_deg", 328.0)))
         self._g_tau_limit = float(getattr(gp, "tau_limit", GRIP_TAU_LIMIT))
         self._g_err_max = self._g_tau_limit / max(GRIP_KP, 1e-6)
         self._g_rate = float(getattr(gp, "rate", GRIP_RATE))
+        # 方向：+1 = 软件正方向与电机一致（角度增大 = 张开）
+        #       −1 = 反过来（现场那台是角度增大 = 夹紧）→ 只在"读/发"这两个边界取反
+        self._g_dir = -1.0 if int(getattr(gp, "direction", 1)) < 0 else 1.0
 
         self._arm = None
         self._model = None
@@ -158,12 +161,14 @@ class RealArm:
                 gg = arm.gripper
                 gg.mode_mit()
                 gg.enable()
-                gpos = float(np.asarray(gg.get_positions(), float).reshape(-1)[0])
+                gpos_raw = float(np.asarray(gg.get_positions(), float).reshape(-1)[0])
+                gpos = self._g_dir * gpos_raw          # 软件坐标系（角度增大 = 张开）
                 grip = {
                     "group": gg,
                     "send": gpos,
                     "sent": gpos,
                     "held": gpos,
+                    "held_raw": gpos_raw,
                     "last": time.monotonic(),
                     "tau": 0.0,
                 }
@@ -191,9 +196,11 @@ class RealArm:
             raise BackendError("RealArm 未连接")
         pos, vel, torq = self._arm.get_state()
         pos = np.asarray(pos, float)
-        grip_rad = float(pos[6]) if pos.size > 6 else 0.0
+        grip_raw = float(pos[6]) if pos.size > 6 else 0.0
+        grip_rad = self._g_dir * grip_raw          # 软件坐标系：角度增大 = 张开
         grip_norm = (grip_rad - self._g_lo) / max(1e-6, self._g_hi - self._g_lo)
         if self._grip is not None:
+            self._grip["held_raw"] = grip_raw
             self._grip["held"] = grip_rad
         return JointState(
             t=now(),
@@ -235,11 +242,15 @@ class RealArm:
 
     # ------------------------------------------------------------------ #
     def _send_gripper(self, g: dict, desired: float) -> None:
-        """按"限偏差"下发夹爪（力矩有上限），并读力矩、做自愈。"""
+        """按"限偏差"下发夹爪（力矩有上限），并读力矩、做自愈。
+
+        `desired`/`held` 都在**软件坐标系**（角度增大 = 张开）；真正发到电机时
+        按 `_g_dir` 取反。
+        """
         sent = grip_force_limited(desired, g["held"], self._g_lo, self._g_hi, self._g_err_max)
         g["sent"] = sent
         g["group"].send_mit(
-            np.array([sent]),
+            np.array([self._g_dir * sent]),
             vel=np.zeros(1),
             kp=np.array([GRIP_KP]),
             kd=np.array([GRIP_KD]),

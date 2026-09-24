@@ -17,7 +17,10 @@
 - 自愈补上 `clear_error()`（+ 连接时也清一次），堵转锁存能自己恢复；
 - 夹爪可用行程改由机型配置 `gripper.lo_deg / hi_deg` 决定（默认 3°~328°）。
 """
+import time
+
 import numpy as np
+import pytest
 
 from rebot_capture.device.profile import DeviceProfile
 from rebot_capture.device.real_arm import (GRIP_ERR_MAX, GRIP_KP, GRIP_TAU_LIMIT,
@@ -197,6 +200,75 @@ def test_grip_recover_clears_fault_then_enables():
     arm._grip_recover({"group": group})
     assert group._mm["gripper"].cleared == 1, "自愈必须先 clear_error（堵转可能锁存故障）"
     assert group.mode_mit_calls == 1 and group.enable_calls == 1
+
+
+# ====================================================================== #
+# 五、方向：direction=-1（角度增大 = 夹紧）时，读/发两个边界都要取反
+# ====================================================================== #
+class _SentGroup:
+    def __init__(self):
+        self.sent: list[float] = []
+
+    def send_mit(self, arr, vel=None, kp=None, kd=None, tau=None):
+        self.sent.append(float(arr[0]))
+
+
+class _FakeHardware:
+    """假的总线：返回给定的一帧状态（pos/vel/torq）。"""
+
+    def __init__(self, pos):
+        self._pos = np.asarray(pos, float)
+        self._zero6 = np.zeros(6)
+
+    def get_state(self, request_feedback: bool = True):
+        p = np.concatenate([self._zero6, [self._pos]])
+        z = np.zeros(7)
+        return p, z, z
+
+    def command(self, *a, **k):  # pragma: no cover
+        pass
+
+
+def _flipped_arm(held_software_deg: float = 100.0):
+    arm = RealArm.__new__(RealArm)
+    arm._g_dir = -1.0                                   # 角度增大 = 夹紧
+    arm._g_lo, arm._g_hi = np.radians(3.0), np.radians(342.0)
+    arm._g_tau_limit = 2.0
+    arm._g_err_max = np.radians(5.7)                    # ≈ 2.0N·m / kp
+    arm._g_rate = 1.2
+    arm._connected = True
+    g = {
+        "group": _SentGroup(),
+        "send": np.radians(held_software_deg),
+        "sent": np.radians(held_software_deg),
+        "held": np.radians(held_software_deg),
+        "held_raw": np.radians(-held_software_deg),
+        "tau": 0.0,
+        "last": time.monotonic(),
+    }
+    arm._grip = g
+    arm._arm = _FakeHardware(np.radians(-held_software_deg))   # 硬件读数与软件反号
+    return arm, g
+
+
+def test_gripper_direction_flip_read_and_send():
+    arm, g = _flipped_arm(held_software_deg=100.0)
+
+    # 读：硬件 −100° → 软件 +100°（角度增大 = 张开）
+    st = arm.read()
+    assert abs(g["held_raw"] - np.radians(-100.0)) < 1e-9
+    assert abs(g["held"] - np.radians(100.0)) < 1e-9
+    assert st.grip == pytest.approx((np.radians(100.0) - arm._g_lo) / (arm._g_hi - arm._g_lo))
+
+    # 发：想要软件 150°（更开）→ 电机应是 −150°…但被"限偏差"夹在 ±5.7°
+    arm._send_gripper(g, np.radians(150.0))
+    expect_motor = -np.radians(100.0 + 5.7)
+    assert abs(g["group"].sent[-1] - expect_motor) < 1e-6, g["group"].sent
+    assert float(g["sent"]) == pytest.approx(np.radians(105.7), abs=1e-6)
+
+    # 想合一点（软件 95°）→ 电机 −95°（在偏差内，不夹）
+    arm._send_gripper(g, np.radians(95.0))
+    assert abs(g["group"].sent[-1] - (-np.radians(95.0))) < 1e-6
 
 
 def test_pen_left_right_drag_is_positional(core_env):

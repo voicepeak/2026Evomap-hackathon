@@ -135,8 +135,12 @@ cd capture_platform
   现在：下发值被夹在"实测 ± τ上限/kp"内（力矩有上限，不会堵转）；推着不动
   0.15~0.6s 就判定"到限位/有阻力"→ **停手 + 半力保持**（自锁机构能抱住东西），
   同方向不再顶，反向/换手势继续；堵转锁存的故障会 `clear_error` 自愈。
-  行程/力矩/速度在 `capture_platform/configs/rebot_b601_rs.json` 的 `gripper` 里改
-  （`lo_deg`/`hi_deg` 可用行程、`tau_limit` 力矩上限 N·m、`rate` 速度 rad/s），改完重启服务
+- **夹爪零点 / 方向**（2026-09-24）：约定 **0° = 爪片完全合上**、程序里"角度增大 = 张开"。
+  现场那台是**反的**（角度增大 = 夹紧），所以面板上的"3° 闭合端"其实是张开端。
+  用 `arm_control/tools/grip_zero.py`（**只动夹爪**）把"合到位"设成 0°、复测整程，
+  `--write-config` 会把 `gripper.direction = -1` 和新的 `lo_deg/hi_deg` 一起写进
+  `capture_platform/configs/rebot_b601_rs.json`；**两处必须一起改**，改完重启服务。
+  其余可调项：`tau_limit` 力矩上限 N·m、`rate` 速度 rad/s
 
 ---
 

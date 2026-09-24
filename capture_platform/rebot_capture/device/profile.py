@@ -34,6 +34,8 @@ class GripperProfile:
     hi_deg: float = 328.0    # 程序可用上界（度）；机械上端 +335.4°，留余量
     tau_limit: float = 2.0   # 电机力矩上限（N·m）：到它就判定"到限位/有阻力"并停手
     rate: float = 1.2        # 行程速度（rad/s，约 69°/s）
+    direction: int = 1       # +1 = 软件正方向与电机一致（角度增大 = 张开）；
+                             # −1 = 反过来（角度增大 = 夹紧，现场实测到的那台）
 
 
 @dataclass
@@ -88,6 +90,7 @@ class DeviceProfile:
                 hi_deg=float(g.get("hi_deg", 328.0)),
                 tau_limit=float(g.get("tau_limit", 2.0)),
                 rate=float(g.get("rate", 1.2)),
+                direction=int(g.get("direction", 1)),
             ),
             notes=list(raw.get("notes", [])),
         )
@@ -133,6 +136,7 @@ class DeviceProfile:
                 "hi_deg": self.gripper.hi_deg,
                 "tau_limit": self.gripper.tau_limit,
                 "rate": self.gripper.rate,
+                "direction": self.gripper.direction,
             },
             "can": dict(self.can),
             "control_mode": self.control_mode,
@@ -166,6 +170,7 @@ class DeviceProfile:
                 "hi_deg": self.gripper.hi_deg,
                 "tau_limit": self.gripper.tau_limit,
                 "rate": self.gripper.rate,
+                "direction": self.gripper.direction,
             },
             "notes": self.notes,
         }

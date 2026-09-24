@@ -68,8 +68,9 @@ class MockArm:
 
     # ------------------------------------------------------------------ #
     def grip_rad(self) -> float:
-        """夹爪绝对角度（rad）——mock 用 GRIP_LO/HI 反归一化。"""
-        lo, hi = math.radians(3.0), math.radians(328.0)
+        """夹爪绝对角度（rad，软件坐标系：角度增大 = 张开）。"""
+        v = self.profile.gripper
+        lo, hi = math.radians(v.lo_deg), math.radians(v.hi_deg)
         return lo + float(self._grip) * (hi - lo)
 
     def grip_tau(self) -> float:
@@ -83,7 +84,8 @@ class MockArm:
         self._limit_hits += int(np.sum(clipped != q))
         self._target = clipped
         if grip_rad is not None:
-            lo, hi = math.radians(3.0), math.radians(328.0)
+            v = self.profile.gripper
+            lo, hi = math.radians(v.lo_deg), math.radians(v.hi_deg)
             frac = (float(grip_rad) - lo) / max(1e-6, hi - lo)
             self._grip_target = float(np.clip(frac, 0.0, 1.0))
 
